@@ -196,7 +196,7 @@ function lazyPaint(pages) {
  *  the exact span range that painted it (the same never-fabricate guarantee the HTML
  *  path has). A word split across lines is re-joined and the hyphen dropped, so
  *  "trans-\nformer" reads as "transformer" — the mapping is adjusted with it. */
-function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
+function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
   const div = wrap.querySelector(".textLayer");
   if (!div) return [];
   const spans = [...div.querySelectorAll("span")].filter(
@@ -238,6 +238,9 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
     for (const i of items) pageWidth = Math.max(pageWidth, i.left + i.w);
   }
   pageWidth = pageWidth || 1;
+  // pageWidth and style.left are both in the layer's own layout units (a CSS transform
+  // scales neither), so the cluster threshold below is unit-consistent. Screen-space
+  // comparisons (the full-width test) use the measured layer box instead.
   skipped.considered += items.length; // the spans this page actually contributed
 
   // 1. group into visual lines (same vertical band), sorted left→right, then split a
@@ -333,24 +336,32 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   const flush = () => {
     const trimmed = text.trim();
     if (trimmed.length >= MIN_BLOCK_CHARS) {
-      const key = trimmed.replace(/\s+/g, " ").toLowerCase(); // full text: no truncation collisions
-      if (!seen.has(key)) {
-        seen.add(key);
-        const id = `p${registry.size}`;
-        const section = `Page ${n}`;
-        registry.set(id, {
-          // The first span of the block: the most precise scroll target there is.
-          element: segments[0]?.node?.parentElement ?? div,
-          text,
-          segments,
-          section,
-        });
-        out.push({ id, text });
-        const row = sections.find((s) => s.name === section);
-        if (row) row.count++;
-        else sections.push({ name: section, count: 1 });
+      // The document cap is applied here, before anything is registered — a block that
+      // will not be kept must not leave an entry in byId either.
+      if (room.blocks <= 0 || room.chars <= 0) {
+        skipped.capped++;
       } else {
-        skipped.dedupe++;
+        const key = trimmed.replace(/\s+/g, " ").toLowerCase(); // full text: no truncation collisions
+        if (!seen.has(key)) {
+          seen.add(key);
+          const id = `p${registry.size}`;
+          const section = `Page ${n}`;
+          registry.set(id, {
+            // The first span of the block: the most precise scroll target there is.
+            element: segments[0]?.node?.parentElement ?? div,
+            text,
+            segments,
+            section,
+          });
+          out.push({ id, text });
+          room.blocks--;
+          room.chars -= text.length;
+          const row = sections.find((s) => s.name === section);
+          if (row) row.count++;
+          else sections.push({ name: section, count: 1 });
+        } else {
+          skipped.dedupe++;
+        }
       }
     } else if (trimmed.length) {
       skipped.short++;
@@ -453,26 +464,31 @@ async function main() {
       // that finishes *after* its deadline is cleaned up instead of being left in the
       // DOM as an orphan nobody tracks.
       const built = buildPage(doc, n, width);
+      let timer = 0;
       const entry = await Promise.race([
         built,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`page ${n} timed out`)), 10_000)),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`page ${n} timed out`)), 10_000);
+        }),
       ]);
-      built.then((late) => {
-        if (late && !pages.has(n)) {
-          late.free();
-          late.wrap.remove();
-        }
-      });
+      clearTimeout(timer); // the page answered: the deadline must not linger
+      built
+        .then((late) => {
+          // A page that arrives after its deadline is cleaned up rather than left in
+          // the DOM as an orphan nobody tracks.
+          if (late && !pages.has(n)) {
+            late.free();
+            late.wrap.remove();
+          }
+        })
+        .catch(() => {}); // and its rejection is handled, never a second unhandled one
       pages.set(n, entry);
       ui.msg.textContent = `page ${n} of ${doc.numPages}`;
       ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
       if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
-        const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections, skipped);
+        const room = { blocks: MAX_BLOCKS - blocks.length, chars: MAX_CHARS - chars };
+        const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections, skipped, room);
         for (const b of pageBlocks) {
-          if (blocks.length >= MAX_BLOCKS || chars >= MAX_CHARS) {
-            skipped.capped++; // counted per dropped block, not once per page
-            continue;
-          }
           blocks.push(b);
           chars += b.text.length;
         }

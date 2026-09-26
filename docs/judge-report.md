@@ -460,3 +460,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Char ceiling enforced only at merge, after collecting up to 600 passages per tab — enforce/check during collect to avoid wasted injection and payload work
   - ext-smoke BLOCKED 23/42 leaves merged search unverified live; blocked-by-rate-limit path needs deterministic test, not an exit-2 claim
   - `restricted` conflates user-denied, no-permission, and gone-tab failures, overstating deny vs system errors in UI note
+
+### Phase 13 — PDF mode (loop 10) — 8.4/10 🟡
+- 27 Sept 2026, 5:24 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **8.2** · craft **9** · robustness **7.9** · performance **8.4** · polish **8.8**
+- top fixes:
+  - Timeout race leaks timers and creates unhandled rejection: 10s setTimeout is never cleared and built.then(late=>...) has no reject handler, so a rejected buildPage yields a second unhandled rejection violating 0-errors
+  - Capped blocks diverge byId from blocks: registry.set happens inside blocksFromPage before MAX_BLOCKS/MAX_CHARS cap is enforced, leaving orphan byId entries for dropped blocks
+  - Column clustering still mixes units: full-width test was fixed to screen-space vs layerBox, but bounds threshold uses pageWidth from clientWidth against style.left units, breaking under zoom/transform
+  - Skip-counter verification is vacuous for new fields: visible smoke check sums only short+dedupe+capped and passes because cappedPages/pageErrors are 0, never exercising the new inclusion; no second-document BERT path visible
+  - Per-line getBoundingClientRect for both edges plus two full sorts per page risks forced layout and O(n log n) cost on 10k-span pages; cache layerBox once and avoid median sort or batch reads
+
+### Phase 14 — cross-tab search (loop 6) — 8.9/10 🟢
+- 27 Sept 2026, 5:25 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **9** · craft **9.2** · robustness **8.6** · performance **9** · polish **8.8**
+- top fixes:
+  - passage-ceiling stop sets done without incrementing skipped.budget while char-ceiling does, inconsistent truncation accounting
+  - null collect result from missing __trackyCollect counted as restricted, conflating no-permission with incompatible tab
+  - titles lists all picked tabs even when merge discards a whole tab on char/passage ceiling, mismatching passages count
+  - CHAR ceiling sums text.length only, ignoring JSON/id overhead, can still overshoot helper payload limit
+  - always reporting skipped.current as Skipped: 1 (this tab) adds noise to successful searches
