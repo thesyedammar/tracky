@@ -1,0 +1,19 @@
+{
+  "results": [
+    {
+      "passageId": "p2",
+      "sentence": "A service charge of Rs.250 applies to all cancellations made less than 24 hours before pickup.",
+      "score": 0.87
+    },
+    {
+      "passageId": "p7",
+      "sentence": "Fuel and toll estimates are added at checkout and are not part of the advertised daily rate.",
+      "score": 0.64
+    },
+    {
+      "passageId": "p11",
+      "sentence": "Airport delivery carries an additional fee of Rs.400.",
+      "score": 0.52
+    }
+  ]
+}
