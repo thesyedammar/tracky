@@ -16,7 +16,7 @@ export class SearchError extends Error {
 export const LIMITS = {
   queryMax: 400,
   passageMax: 2200, // chars per passage
-  passagesMax: 600, // passages per search (the engine sweeps larger sets in chunks)
+  passagesMax: 1200, // engine safety cap; the extension collects ≤600 per contract (frozen v1)
   totalCharsMax: 400_000,
   minBest: 0.58, // the best score must clear this for ANY results to show (re-tuned in Phase 11)
   resultsMax: 8, // ranked results surfaced by default
@@ -32,7 +32,7 @@ export function validateSearchInput(body) {
   if (typeof query !== "string" || !query.trim()) throw new SearchError("Enter something you want to find.");
   const q = query.trim();
   if (q.length > LIMITS.queryMax) throw new SearchError(`Keep your search under ${LIMITS.queryMax} characters.`);
-  if (!Array.isArray(passages) || passages.length === 0) throw new SearchError("Send between 1 and 600 passages.");
+  if (!Array.isArray(passages) || passages.length === 0) throw new SearchError("Send between 1 and 1200 passages.");
   if (passages.length > LIMITS.passagesMax) throw new SearchError(`Send at most ${LIMITS.passagesMax} passages.`);
 
   const ids = new Set();
@@ -56,7 +56,7 @@ const upstream = (what) => new SearchError(`Jev returned an incomplete evaluatio
 
 /** Probabilities are auxiliary (why-chips); they are validated and DROPPED if malformed. */
 function cleanProbabilities(raw) {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const vals = Object.values(raw);
   const ok = vals.length > 0 && vals.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1);
   return ok ? raw : null;
@@ -75,7 +75,7 @@ export function parseJevAnswers(data, passages) {
   if (!Array.isArray(passages) || passages.length === 0) throw upstream("no passages to adjudicate");
 
   return passages.map((p) => {
-    if (!p || !Array.isArray(p.sentences)) throw upstream(`passage ${p?.id ?? "?"} not prepared`);
+    if (!p || !Array.isArray(p.sentences) || p.sentences.length === 0) throw upstream(`passage ${p?.id ?? "?"} not prepared`);
     const a = answers[p.id];
     const score = a?.noul ?? a?.probability;
     if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
@@ -94,29 +94,45 @@ export function parseJevAnswers(data, passages) {
       focusIndex = idx;
       choiceProbabilities = cleanProbabilities(f.probabilities);
     }
-    const focusText = focusIndex === null ? null : p.sentences[focusIndex].text;
-    if (focusText !== null && !p.text.includes(focusText)) throw upstream(`sentence for ${p.id} is not part of its passage`);
-    return { id: p.id, score, focusIndex, focusText, choiceProbabilities };
+    const focus = focusIndex === null ? null : p.sentences[focusIndex];
+    const focusText = focus?.text ?? null;
+    const focusStart = focus?.start ?? null;
+    if (focusText !== null) {
+      // The substring belt: exact slice at an integer offset, or nothing passes.
+      const at = Number.isInteger(focusStart) ? p.text.slice(focusStart, focusStart + focusText.length) : null;
+      if (at !== focusText) throw upstream(`sentence for ${p.id} is not part of its passage`);
+    }
+    return { id: p.id, score, focusIndex, focusText, focusStart, choiceProbabilities };
   });
 }
 
 /**
- * Rank parsed answers for display. Policy (field-proven in the reference pipeline):
- * rank, don't cut — Jev scores are not comparable across searches, so a fixed
- * per-item cutoff would be wrong twice over. Show the top 3 whenever the best
- * score clears the sanity gate, extend with anything within 45% of the best,
- * cap at the display limit. If even the best is below the gate, show nothing —
- * an honest empty beats a weak guess. (Gate + band re-tuned in Phase 11.)
+ * Rank parsed answers for display. Policy: rank, don't cut — Jev scores are not
+ * comparable across searches, so a fixed per-item cutoff would be wrong. Gate:
+ * if the best score is below the sanity gate, show nothing (an honest empty beats
+ * a weak guess). Then keep everything within 45% of the best score, best first,
+ * capped at the display limit. (Live evidence 2026-09-27: "top 3 always" dragged
+ * 0.03–0.09 stragglers into real results — the band alone is the right shape.
+ * Gate + band re-tuned in Phase 11's benchmark.)
  * The never-fabricate substring guarantee is enforced in parseJevAnswers.
  */
-export function rankResults(parsed, { minBest = LIMITS.minBest, topAlways = 3, ofBest = 0.55, limit = LIMITS.resultsMax } = {}) {
+export function rankResults(parsed, { minBest = LIMITS.minBest, ofBest = 0.55, limit = LIMITS.resultsMax } = {}) {
+  if (!Array.isArray(parsed)) throw new SearchError("rankResults expects an array.", 500);
+  if (!Number.isFinite(minBest) || minBest < 0 || minBest > 1) throw new SearchError("minBest must be between 0 and 1.", 500);
+  if (!Number.isFinite(ofBest) || ofBest <= 0 || ofBest > 1) throw new SearchError("ofBest must be a fraction between 0 and 1.", 500);
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIMITS.resultsMax) throw new SearchError(`limit must be an integer between 1 and ${LIMITS.resultsMax}.`, 500);
   const ranked = parsed
     .filter((r) => r.focusText !== null)
     .sort((a, b) => b.score - a.score);
   if (!ranked.length || ranked[0].score < minBest) return [];
   const band = ranked[0].score * ofBest;
   return ranked
-    .filter((r, i) => i < topAlways || r.score >= band)
+    .filter((r) => r.score >= band)
     .slice(0, limit)
-    .map((r) => ({ passageId: r.id, sentence: r.focusText, score: Math.round(r.score * 1000) / 1000 }));
+    .map((r) => ({
+      passageId: r.id,
+      sentence: r.focusText,
+      score: Math.round(r.score * 1000) / 1000,
+      offset: r.focusStart, // exact char offset of `sentence` inside its passage
+    }));
 }

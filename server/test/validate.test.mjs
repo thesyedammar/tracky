@@ -63,7 +63,17 @@ test("accepts a valid answer set", () => {
   assert.equal(parsed.length, 2);
   assert.equal(parsed[0].score, 0.9);
   assert.equal(parsed[0].focusText, "A service charge of Rs.250 applies.");
+  assert.equal(parsed[0].focusStart, 0);
   assert.equal(parsed[1].focusText, "The pool is warm."); // single sentence → implied s0
+  assert.equal(parsed[1].focusStart, 0);
+});
+
+test("focusStart is the exact offset of the chosen sentence", () => {
+  const answers = { answers: { p0: { noul: 0.9 }, focus_p0: { choice: "s1" }, p1: { noul: 0.1 } } };
+  const parsed = parseJevAnswers(answers, prepared);
+  const s1 = prepared[0].sentences[1];
+  assert.equal(parsed[0].focusStart, s1.start);
+  assert.equal(prepared[0].text.slice(parsed[0].focusStart, parsed[0].focusStart + s1.text.length), s1.text);
 });
 
 test("rejects a score above 1", () => {
@@ -99,6 +109,14 @@ test("missing per-passage answer is an upstream failure", () => {
 
 // ---------- ranking ----------
 
+test("rankResults validates its overrides", () => {
+  const parsed = [{ id: "p0", score: 0.9, focusText: "a" }];
+  for (const bad of [{ minBest: NaN }, { minBest: 2 }, { minBest: -1 }, { ofBest: 0 }, { ofBest: -1 }, { limit: 0 }, { limit: 9 }, { limit: 2.5 }]) {
+    assert.throws(() => rankResults(parsed, bad), SearchError);
+  }
+  assert.equal(rankResults(parsed, { minBest: 0, ofBest: 1, limit: 8 }).length, 1); // the boundaries are fine
+});
+
 test("rankResults: nothing good enough → honest empty", () => {
   const weak = [
     { id: "p0", score: 0.52, focusText: "a" },
@@ -107,14 +125,13 @@ test("rankResults: nothing good enough → honest empty", () => {
   assert.deepEqual(rankResults(weak), []); // best 0.52 < the 0.58 gate
 });
 
-test("rankResults: top 3 always shown once the best clears the gate", () => {
+test("rankResults: stragglers far below the best never surface (live pet-query case)", () => {
   const mixed = [
-    { id: "p0", score: 0.9, focusText: "a" },
-    { id: "p1", score: 0.2, focusText: "b" },
-    { id: "p2", score: 0.1, focusText: "c" },
-    { id: "p3", score: 0.05, focusText: "d" },
+    { id: "p0", score: 0.64, focusText: "The cleaning charge covers pet hair." },
+    { id: "p1", score: 0.09, focusText: "Every vehicle is photographed." },
+    { id: "p2", score: 0.03, focusText: "Unlimited kilometres for personal use." },
   ];
-  assert.deepEqual(rankResults(mixed).map((r) => r.passageId), ["p0", "p1", "p2"]);
+  assert.deepEqual(rankResults(mixed).map((r) => r.passageId), ["p0"]); // band 0.352 drops the 0.09/0.03 stragglers
 });
 
 test("rankResults: extends with items within 45% of best, capped at 8", () => {
@@ -147,9 +164,18 @@ test("rejects leading-zero passage ids (p00)", () => {
   assert.throws(() => validateSearchInput({ query: "q", passages: [{ id: "p00", text: "a" }] }), SearchError);
 });
 
+test("passage-count safety cap: 1200 ok, 1201 rejected", () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, text: "x" }));
+  assert.equal(validateSearchInput({ query: "q", passages: many(1200) }).passages.length, 1200);
+  assert.throws(() => validateSearchInput({ query: "q", passages: many(1201) }), SearchError);
+});
+
 test("malformed probabilities are dropped, not fatal", () => {
   const messy = { answers: { p0: { noul: 0.9 }, focus_p0: { choice: "s0", probabilities: { s0: "high" } }, p1: { noul: 0.1 } } };
   const parsed = parseJevAnswers(messy, prepared);
   assert.equal(parsed[0].choiceProbabilities, null);
   assert.equal(parsed[0].focusText, "A service charge of Rs.250 applies.");
+
+  const arrayProbs = { answers: { p0: { noul: 0.9 }, focus_p0: { choice: "s0", probabilities: [0.9, 0.1] }, p1: { noul: 0.1 } } };
+  assert.equal(parseJevAnswers(arrayProbs, prepared)[0].choiceProbabilities, null);
 });

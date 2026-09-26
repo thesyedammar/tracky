@@ -52,15 +52,16 @@ Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the 
 Done when: `node --test` green; fixture splits cleanly. ✓ 47/47 green; fixture → 9 paragraphs / 41 sentences. Judge: 8.4 → **9.1/10 accept** (docs/judge-report.md).
 
 ### Phase 3 — Engine as a plain script (+ sweep)
-- [ ] 3.1 spikes/search-cli.mjs — file + query → ranked [score] sentence
-- [ ] 3.2 Ranking v1 (>0.5, cap 8)
-- [ ] 3.3 Run on ToS, query "hidden charges"
-- [ ] 3.4 Wording pass (topical vs QA) — keep the better; comment the learning
-- [ ] 3.5 Chunk long pages into passes (~80 passages/request)
-- [ ] 3.6 Merge + dedupe across passes
-- [ ] 3.7 Huge-page fixture test (1000+ blocks) — nothing missed
+- [x] 3.1 spikes/search-cli.mjs — file + query → ranked [score] sentence (+offset, +`--json`)
+- [x] 3.2 Ranking v1 → refined to rank-don't-cut: gate 0.58 + within-45%-of-best band, cap 8
+- [x] 3.3 Run on ToS, query "hidden charges" — top 0.92, 6 real fee hits
+- [x] 3.4 Wording pass (topical kept — Phase-1 proven; noted in server/jev.mjs)
+- [x] 3.5 Chunk long pages into passes (BATCH_MAX=80/pass)
+- [x] 3.6 Merge + dedupe across passes (identical sentences collapse to best hit)
+- [x] 3.7 Huge-page fixture test — spikes/huge-page-check.mjs, 1000 blocks, 9/9 checks
 
-Done when: fee sentence ranks #1 + huge fixture fully covered.
+Done when: fee sentence ranks #1 + huge fixture fully covered. ✓
+Results (2026-09-27 IST): "hidden charges" → 0.92 top ("They are not part of the advertised daily rate.") @815 ms · "what happens if I cancel" → 0.96 · "can I bring a pet" → single 0.67 hit (policy fix: top-3-always had dragged 0.09/0.03 stragglers into display) · 1000-block sweep → 13 passes of 80/40, golds on chunk edges p79/p80/p959/p960 all surface, 7.7 s, 212k/62k tokens. Engine safety cap: 1200 passages (extension collects ≤600 per contract). Judge: 8.5 → 8.8 → 8.2 → **8.9/10 accept** (4 loops; ledger in docs/judge-report.md). Tests: 60 specs green.
 
 ### Phase 4 — Helper server (+ transparency layer)
 - [ ] 4.1 server/server.mjs — 127.0.0.1:4199, POST /api/search, 512KB cap, loopback-only
