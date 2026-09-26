@@ -36,9 +36,10 @@ Done when: repo live, contract + mock committed, Hamdan building.
 - [x] 1.2 Run; fix route/model if needed (free route uses `noul`, not `boolean`)
 - [x] 1.3 spikes/jev-choice.mjs — pick which of 3 sentences mentions the charge → choice + probabilities
 - [x] 1.4 spikes/jev-batch.mjs — 5 passages × 2 questions in ONE request
+- [x] 1.5 spikes/jev-sanity.mjs — sanity battery: controls, position bias, injection, stability
 
 Done when: three runs print real numbers; shape graduates to server/jev.mjs.
-Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the charge sentence (s1, confidence 1.0) @ 760ms · 1.4 **ten questions in ONE call** @ 742ms — relevant 0.88/0.88, junk 0.03–0.05, borderline 0.25 (sensibly separated). Response keys for the engine: `answers[q].noul`, `answers[q].choice` + `.probabilities` + `.confidence`, `usage`.
+Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the charge sentence (s1, confidence 1.0) @ 760ms · 1.4 **ten questions in ONE call** @ 742ms — relevant 0.88/0.88, junk 0.03–0.05, borderline 0.25 (sensibly separated). 1.5 sanity battery: injection ignored (0.02–0.03) · picks correct at first/middle/last positions · 3× re-runs stable ±0.04 · gray zone 0.62–0.66 near the 0.58 line (threshold tuning → Phase 11 benchmark). Response keys for the engine: `answers[q].noul`, `answers[q].choice` + `.probabilities` + `.confidence`, `usage`.
 
 ### Phase 2 — Sentences + questions + validation (test-first)
 - [ ] 2.1 server/sentences.mjs — Intl.Segmenter + abbreviation guards, char offsets
