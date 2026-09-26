@@ -1,6 +1,6 @@
-# Sleuth — Ctrl+F that finds by meaning
+# Tracky — Ctrl+F that finds by meaning
 
-> **Working name** (rename window open until first release). Search any page by **meaning**, not exact words: describe what you are looking for ("hidden charges") and Sleuth highlights the sentence you meant — with **receipts**: the exact text, in its exact place, nothing invented.
+> Search any page by **meaning**, not exact words: describe what you are looking for ("hidden charges") and Tracky highlights the sentence you meant — with **receipts**: the exact text, in its exact place, nothing invented.
 
 **Status: Phase 0 — scaffold.** Contract frozen, mocks live, build starts at Phase 1.
 
@@ -12,7 +12,7 @@
 
 ## Why "with receipts"?
 
-Most "AI search" invents answers. Sleuth only **picks existing sentences** and validates every answer before showing it — if it cannot verify, it errors instead of guessing. Planned upgrades over the classic approach: full-page sweep, hybrid literal + meaning matches, an answer card with clickable receipts, payload preview and redact mode.
+Most "AI search" invents answers. Tracky only **picks existing sentences** and validates every answer before showing it — if it cannot verify, it errors instead of guessing. Planned upgrades over the classic approach: full-page sweep, hybrid literal + meaning matches, an answer card with clickable receipts, payload preview and redact mode.
 
 ## Repo map
 

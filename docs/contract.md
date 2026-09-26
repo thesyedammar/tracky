@@ -1,4 +1,4 @@
-# Sleuth API contract — v1 (frozen 2026-09-26)
+# Tracky API contract — v1 (frozen 2026-09-26)
 
 The helper exposes **one endpoint**. The extension and the playground both talk to it.
 Until this file changes, this shape is law — clients can build against `app/mock/` before the server exists.

@@ -1,6 +1,6 @@
-# Sleuth — build plan
+# Tracky — build plan
 
-**Working name: Sleuth** (alternates: Glint, Hound — rename window open until first release; rename = repo rename + folder rename, cheap now).
+**Name: Tracky** (locked 2026-09-26).
 
 **Goal:** Ctrl+F that finds by meaning — highlight the sentence you meant, with receipts.
 
@@ -21,7 +21,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 ## Phases
 
 ### Phase 0 — Setup & contract
-- [x] 0.1 Working name picked: Sleuth
+- [x] 0.1 Name picked: Tracky
 - [x] 0.2 Repo skeleton (README, .gitignore, LICENSE, folders)
 - [x] 0.3 Contract + mocks (docs/contract.md, app/mock/*.json)
 - [~] 0.4 Public GitHub repo live; Hamdan invite sent (accept pending)
