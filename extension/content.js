@@ -99,16 +99,20 @@
         .hit, .wrap, .dot, .jump, .recent-chip, .chip { transition: none !important; }
       }
       .status {
-        display: flex; align-items: center; gap: 8px; padding: 9px 12px 11px;
-        border-top: 1px solid rgba(255, 255, 255, .06); color: #AAB3C2; font-size: 12px;
+        display: flex; align-items: center; gap: 9px; padding: 10px 12px 12px;
+        border-top: 1px solid rgba(255, 255, 255, .06); color: #C3CBD9; font-size: 12.5px;
+        line-height: 1.45;
       }
+      /* When the status is a failure, say so with more than a dot: brighter text and
+         a tinted strip, so the most important line in the panel cannot be missed. */
+      .status:has(.dot.bad) { color: #FFD9D9; background: rgba(242, 109, 109, .06); }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
       .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
       .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
       .dot.idle { background: #8A94A6; }
       .dot.wait { background: #F5C453; animation: tPulse 1.1s ease-in-out infinite; }
       @keyframes tPulse { 50% { opacity: .35; } }
-      .hint { color: #7C8698; font-size: 11px; padding: 0 12px 11px; }
+      .hint { color: #8D97A8; font-size: 11.5px; line-height: 1.6; padding: 2px 12px 12px; }
       kbd { background: rgba(255, 255, 255, .08); border-radius: 4px; padding: 1px 5px; font: 10px ui-monospace, monospace; }
       .results { display: none; max-height: 320px; overflow: auto; padding: 2px 12px 10px; }
       .results.open { display: block; }
@@ -180,11 +184,11 @@
       /* Cross-tab (Phase 14): opt-in, so the toggle only appears when the options
          page has enabled it. Other tabs' hits are a separate section, each labelled
          with its tab — they are quotes from that tab, and clicking one goes there. */
-      .xtabs { display: flex; gap: 6px; padding: 0 12px 8px; align-items: center; }
-      .xtabs button { font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #cfd6e4; background: rgba(255,255,255,.06);
+      .xtabs { display: flex; gap: 9px; padding: 0 12px 10px; align-items: center; }
+      .xtabs button { flex: none; font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #cfd6e4; background: rgba(255,255,255,.06);
         border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 5px 10px; cursor: pointer; }
       .xtabs button[aria-pressed="true"] { background: rgba(212,175,55,.18); border-color: rgba(212,175,55,.5); color: #F5C453; }
-      .xtabs .note { font-size: 11px; color: #8A94A6; }
+      .xtabs .note { font-size: 11px; color: #98A2B3; line-height: 1.4; }
       .xtab-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #9aa4b8;
         padding: 10px 12px 4px; border-top: 1px solid rgba(255,255,255,.07); margin-top: 8px; }
       .xtab-head .t { color: #cfd6e4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }

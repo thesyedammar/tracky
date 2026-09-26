@@ -90,7 +90,6 @@ async function buildPage(doc, n, targetWidth) {
 
   const paint = async () => {
     if (canvas.dataset.pending !== "1" || canvas.dataset.rendering === "1") return;
-    delete canvas.dataset.pending;
     canvas.dataset.rendering = "1"; // a free() during the render must not zero this canvas
     try {
       // Restore the pixel buffer that free() released — a repaint after a free must
@@ -106,6 +105,10 @@ async function buildPage(doc, n, targetWidth) {
         viewport,
         transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined,
       }).promise;
+      delete canvas.dataset.pending; // cleared only on success
+    } catch (err) {
+      canvas.dataset.pending = "1"; // stay armed: the next visit tries again
+      throw err;
     } finally {
       delete canvas.dataset.rendering;
     }
@@ -129,6 +132,7 @@ function lazyPaint(pages) {
   const paintSafely = (entry, wrap) => {
     entry.paint().catch((err) => {
       wrap.dataset.paintError = String(err?.message ?? err); // visible to tests, never silent
+      io.observe(wrap); // re-arm: the next visit to this page tries again
     });
   };
   const io = new IntersectionObserver(
@@ -192,16 +196,18 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   );
   if (!spans.length) return [];
 
-  // Geometry: inline style first, then the layout box as a fallback — a span whose
-  // style is missing must not silently collapse to 0 and corrupt the line grouping.
+  // Geometry: inline style first, then a rect-relative fallback. Both are measured
+  // against the text layer (the same coordinate system as style.left/top) — mixing in
+  // offsetParent coordinates would corrupt the line grouping.
+  const layerRect = div.getBoundingClientRect();
   const num = (v) => {
     const n = parseFloat(v);
     return Number.isFinite(n) ? n : null;
   };
   const items = spans.map((span) => {
-    const w = span.getBoundingClientRect().width || 0;
-    const left = num(span.style.left) ?? span.offsetLeft ?? 0;
-    const top = num(span.style.top) ?? span.offsetTop ?? 0;
+    const rect = span.getBoundingClientRect();
+    const left = num(span.style.left) ?? rect.left - layerRect.left;
+    const top = num(span.style.top) ?? rect.top - layerRect.top;
     return {
       span,
       node: span.firstChild,
@@ -209,7 +215,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
       top,
       left,
       size: num(span.style.fontSize) ?? 12,
-      w,
+      w: rect.width || 0,
     };
   });
   const sizes = items.map((i) => i.size).sort((a, b) => a - b);
@@ -239,24 +245,27 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   for (const ln of runs) ln.items.sort((a, b) => a.left - b.left);
   const lines = runs;
 
-  // 2. column detection: a line starting far right of the previous line's start, on a
-  //    continuing vertical band, is a new column — not a continuation of that line.
-  for (let i = 1; i < lines.length; i++) {
-    const prev = lines[i - 1];
-    const cur = lines[i];
-    const jumpRight = cur.items[0].left - prev.items[0].left;
-    const bandGap = cur.top - prev.top;
-    cur.columnBreak = jumpRight > pageWidth * 0.18 && bandGap < line * 2.5;
-    cur.column = (prev.column ?? 0) + (cur.columnBreak ? 1 : 0);
+  // 2. column detection by clustering the line starts: real columns show up as
+  //    clusters of x positions (a two-column paper has two). Each line is assigned
+  //    the cluster its start falls into, so ordering by (cluster, top) reads one
+  //    column top-to-bottom, then the next — and a right→left transition between
+  //    bands can never be mistaken for a continuation.
+  const startsSorted = lines.map((ln) => ln.items[0].left).sort((a, b) => a - b);
+  const bounds = []; // cluster boundaries: the first x of each new cluster
+  for (const x of startsSorted) {
+    if (!bounds.length || x - bounds[bounds.length - 1] > pageWidth * 0.12) bounds.push(x);
   }
-  lines[0].column = 0;
-  // Re-order: column by column (left to right), top to bottom inside each column.
+  for (const ln of lines) {
+    let col = 0;
+    for (let i = 0; i < bounds.length; i++) if (ln.items[0].left >= bounds[i] - 1) col = i;
+    ln.column = col;
+  }
   const ordered = lines.slice().sort((a, b) => (a.column ?? 0) - (b.column ?? 0) || a.top - b.top);
-  // Guard against a false column split (a centred heading, an indented list): only
-  // trust a column order if the split produces a real second column of text.
+  // Guard against a false split (a centred heading, an indented list): only trust a
+  // column order when every cluster really holds several lines.
   const colCounts = new Map();
   for (const ln of ordered) colCounts.set(ln.column ?? 0, (colCounts.get(ln.column ?? 0) ?? 0) + 1);
-  const trustworthy = [...colCounts.entries()].every(([c, count]) => c === 0 || count >= 2);
+  const trustworthy = colCounts.size > 1 && [...colCounts.entries()].every(([c, count]) => c === 0 || count >= 2);
   const finalLines = trustworthy ? ordered : lines;
   const out = [];
   let text = "";
@@ -295,10 +304,9 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
 
   for (const ln of finalLines) {
     const gap = lastTop === null ? 0 : ln.top - lastTop;
-    // A column change closes the block — and when the column split was not
-    // trustworthy, every detected column start is treated as a hard break, so a
-    // block can never span two columns even if the re-ordering was skipped.
-    const columnChanged = (ln.column ?? 0) !== lastColumn || (!trustworthy && ln.columnBreak);
+    // A column change closes the block (only meaningful when the column split was
+    // trusted; otherwise the page's own reading order is kept as-is).
+    const columnChanged = trustworthy && (ln.column ?? 0) !== lastColumn;
     // A paragraph gap or a new column closes the block before this line joins it.
     if (text && (gap > line * 1.9 || columnChanged)) flush();
     for (const it of ln.items) {
@@ -378,39 +386,31 @@ async function main() {
   const blocks = [];
   const pages = new Map();
   const skipped = { short: 0, dedupe: 0, capped: 0, pageErrors: 0 };
-  const maxBlocks = MAX_BLOCKS; // published in stats; the collector honours the option
   const t0 = performance.now();
   let chars = 0;
   let considered = 0;
 
   for (let n = 1; n <= doc.numPages; n++) {
-    let entry;
     try {
-      entry = await buildPage(doc, n, width);
-    } catch (err) {
-      // One unreadable page must not cost the whole document: note it and go on.
-      skipped.pageErrors = (skipped.pageErrors ?? 0) + 1;
-      continue;
-    }
-    pages.set(n, entry);
-    ui.msg.textContent = `page ${n} of ${doc.numPages}`;
-    ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
-    considered += entry.wrap.querySelectorAll(".textLayer span").length;
-    if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
-      try {
+      const entry = await buildPage(doc, n, width);
+      pages.set(n, entry);
+      ui.msg.textContent = `page ${n} of ${doc.numPages}`;
+      ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
+      considered += entry.wrap.querySelectorAll(".textLayer span").length;
+      if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
         const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections, skipped);
         for (const b of pageBlocks) {
           if (blocks.length >= MAX_BLOCKS || chars >= MAX_CHARS) {
-            skipped.capped++;
-            break;
+            skipped.capped++; // counted per dropped block, not once per page
+            continue;
           }
           blocks.push(b);
           chars += b.text.length;
         }
-      } catch (err) {
-        // A page whose text layer is malformed costs that page, not the document.
-        skipped.pageErrors++;
       }
+    } catch (err) {
+      // One unreadable page must not cost the whole document: note it and go on.
+      skipped.pageErrors++;
     }
     // Yield so the progress bar paints on long documents.
     await new Promise((r) => requestAnimationFrame(r));
@@ -436,14 +436,20 @@ async function main() {
     ms: Math.round(performance.now() - t0),
     pages: doc.numPages,
     spans: considered, // text-layer spans the collector looked at
-    maxBlocks,
     rendering: false, // the stub says true while pdf.js is still working
   };
   window.__trackyPdfReady = true;
   window.__trackyPdfStats = stats;
   window.__trackyCollect = function collect(opts = {}) {
     const cap = Number.isInteger(opts?.maxBlocks) && opts.maxBlocks > 0 ? Math.min(opts.maxBlocks, MAX_BLOCKS) : MAX_BLOCKS;
-    return { blocks: cap >= blocks.length ? blocks : blocks.slice(0, cap), stats, byId: registry, sections };
+    return {
+      blocks: cap >= blocks.length ? blocks : blocks.slice(0, cap),
+      // maxBlocks is reported per call (exactly like the stub does), so identical
+      // calls produce identical stats from either collector.
+      stats: { ...stats, maxBlocks: cap },
+      byId: registry,
+      sections,
+    };
   };
   lazyPaint(pages);
 

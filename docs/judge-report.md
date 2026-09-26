@@ -370,3 +370,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - CROSS_TOTAL misapplied: used as per-tab cap via min(CROSS_TOTAL, budget/6) so total from other tabs can reach budget (~1200) exceeding stated 600 total cap
   - jumpToOtherTab has no try/catch around send() timeout, unhandled rejection; tracky:run handler not evidenced in provided content.js tail
   - Serial per-tab disabledFor storage read plus double executeScript; parallelize and pass perTab cap validation against collector maxBlocks support
+
+### Phase 13 — PDF mode (loop 5) — 7.4/10 🔴
+- 27 Sept 2026, 4:53 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **6** · craft **8** · robustness **7** · performance **8** · polish **8**
+- top fixes:
+  - Column tracking increments on every left->right jump and never resets, so a 2-column page becomes 0,1,1,2,2,3... and sorted columns mix left+right; cluster by x instead and break on right->left transitions, otherwise untrustworthy mode still merges band1-right+band2-left into one block
+  - offsetLeft/offsetTop fallback uses offsetParent coordinates while style left/top use textLayer coordinates, corrupting line grouping when styles are missing; use offset relative to textLayer or getBoundingClientRect delta
+  - Failed paint deletes data-pending before render and first-two pages have no observer to retry, leaving a blank page forever; keep pending until success or re-arm observer on error
+  - blocksFromPage is in a second try after pages.set and considered counting, not the same per-page try as buildPage; capped path counts only one overflow block and considered already includes failed pages
+  - Real stats.maxBlocks is fixed at 600 while stub echoes the caller's maxBlocks, so identical calls report different stats values
