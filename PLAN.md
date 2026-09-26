@@ -4,7 +4,7 @@
 
 **Goal:** Ctrl+F that finds by meaning — highlight the sentence you meant, with receipts.
 
-**Status:** Phase 0 complete (repo scaffold live). Next: Phase 1.
+**Status:** Phases 0–1 complete (scaffold live; Jev brain proven with real run numbers). Next: Phase 2.
 
 Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 
@@ -13,7 +13,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 - From scratch. The reference project (Needle, Apache-2.0) is **read-only study** — read it, never copy from it.
 - Contract frozen v1 → `docs/contract.md`. Clients build against `app/mock/`.
 - Key rule: the Jev key lives ONLY in `server/.env`. Never in the extension, never in the playground, never committed.
-- Default route: free Jev gateway (proven in the Asli project). Official TypeSafe key optional.
+- Route LOCKED (Phase 1): opencode zen free gateway — base `https://opencode.ai/zen/v1/systemone`, model `jev-1.13-free`. Official TypeSafe key stays as fallback.
 - Helper: 127.0.0.1:4199. Node 22+. Public repo, MIT.
 - Owners: `extension/` + `server/` + `spikes/` = Ammar; `app/` = Hamdan; `docs/` = both.
 - Rules: smallest steps; commit after each; every phase demoed on a REAL page before "done"; no "it should work".
@@ -32,12 +32,13 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 Done when: repo live, contract + mock committed, Hamdan building.
 
 ### Phase 1 — Prove the Jev brain (terminal spikes)
-- [ ] 1.1 spikes/jev-1-question.mjs — one paragraph, one question → answer + probability
-- [ ] 1.2 Run; fix route/model if needed (free route uses `noul`, not `boolean`)
-- [ ] 1.3 spikes/jev-choice.mjs — pick which of 3 sentences mentions the charge → choice + probabilities
-- [ ] 1.4 spikes/jev-batch.mjs — 5 passages × 2 questions in ONE request
+- [x] 1.1 spikes/jev-1-question.mjs — one paragraph, one question → answer + probability
+- [x] 1.2 Run; fix route/model if needed (free route uses `noul`, not `boolean`)
+- [x] 1.3 spikes/jev-choice.mjs — pick which of 3 sentences mentions the charge → choice + probabilities
+- [x] 1.4 spikes/jev-batch.mjs — 5 passages × 2 questions in ONE request
 
 Done when: three runs print real numbers; shape graduates to server/jev.mjs.
+Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the charge sentence (s1, confidence 1.0) @ 760ms · 1.4 **ten questions in ONE call** @ 742ms — relevant 0.88/0.88, junk 0.03–0.05, borderline 0.25 (sensibly separated). Response keys for the engine: `answers[q].noul`, `answers[q].choice` + `.probabilities` + `.confidence`, `usage`.
 
 ### Phase 2 — Sentences + questions + validation (test-first)
 - [ ] 2.1 server/sentences.mjs — Intl.Segmenter + abbreviation guards, char offsets

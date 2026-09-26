@@ -2,7 +2,7 @@
 
 > Search any page by **meaning**, not exact words: describe what you are looking for ("hidden charges") and Tracky highlights the sentence you meant — with **receipts**: the exact text, in its exact place, nothing invented.
 
-**Status: Phase 0 — scaffold.** Contract frozen, mocks live, build starts at Phase 1.
+**Status: Phases 0–1 done.** Contract frozen, mocks live; the Jev brain is proven with real numbers (spikes ran on the free route). Building the engine next (Phase 2).
 
 ## What it will be
 
