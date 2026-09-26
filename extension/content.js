@@ -587,7 +587,8 @@
     const skipped = meta?.skipped ?? {};
     const notes = [];
     if (skipped.blocked) notes.push(`${skipped.blocked} that cannot be scripted (PDFs, chrome:// pages)`);
-    if (skipped.restricted) notes.push(`${skipped.restricted} denied or not permitted`);
+    if (skipped.denied) notes.push(`${skipped.denied} on your deny list`);
+    if (skipped.restricted) notes.push(`${skipped.restricted} Tracky has no permission for`);
     if (skipped.over) notes.push(`${skipped.over} beyond the 6-tab limit`);
     if (skipped.budget) notes.push(`${skipped.budget} with no room left in this search`);
     if (skipped.empty) notes.push(`${skipped.empty} with nothing readable`);

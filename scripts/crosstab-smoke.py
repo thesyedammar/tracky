@@ -195,8 +195,8 @@ def main() -> int:
             denied = sw_collect(worker, None)
             check(
                 "a denied host is skipped, not read",
-                denied["skipped"]["restricted"] >= 1 and not denied["tabs"],
-                f"restricted={denied['skipped']['restricted']} tabs={len(denied['tabs'])}",
+                denied["skipped"]["denied"] >= 1 and not denied["tabs"],
+                f"denied={denied['skipped']['denied']} tabs={len(denied['tabs'])}",
             )
             set_opts({"disabledHosts": []})
 

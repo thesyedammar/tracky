@@ -440,3 +440,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - cap cross-tab text by bytes/chars before merge: count caps passages but one hostile/huge block can blow helper payload, validate/truncate b.text
   - guard budget type and perTab NaN: budget<=0 misses undefined/NaN, Math.floor(budget/n) then NaN propagates to maxBlocks; validate tabId for jump
   - remove dead if(map.has(id)) continue and handle non-pN local ids explicitly; ensure hung timeout cannot double-report and timer is always cleared
+
+### Phase 13 — PDF mode (loop 9) — 8/10 🟡
+- 27 Sept 2026, 5:19 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **7.8** · craft **8.2** · robustness **7.3** · performance **8** · polish **8.7**
+- top fixes:
+  - 10s Promise.race timeout leaks: timer never cleared, losing race's buildPage still appends orphan .page and can reject unhandled while pages map misses it — clear timeout, detach/remove orphan or adopt late entry
+  - pages 1-2 are painted up front but never observed by far observer so never freed — 300-page doc pins first buffers forever; observe all painted pages for far
+  - de-hyphenation triggers for every span in a line, not just line breaks, turning intra-line well-known/e-mail splits into wellknown — gate on new visual line only
+  - full-width test mixes style.left units with getBoundingClientRect().width screen pixels, wrong under zoom/transform — measure both edges in same space
+  - searchWithTabs uses undefined skipped.budget++ on CROSS_CHARS ceiling causing ReferenceError; also Math.max(...items) spread risks stack overflow and skipped total omits cappedPages/pageErrors
+
+### Phase 14 — cross-tab search (loop 5) — 7/10 🔴
+- 27 Sept 2026, 5:19 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **6** · craft **7** · robustness **6** · performance **8** · polish **8**
+- top fixes:
+  - ReferenceError in searchWithTabs merge: bare `skipped.budget++` should be `gathered.skipped.budget++` — any hit of the 400k ceiling crashes the merged search
+  - Background runSearch still takes only `{query,passages}` while spec requires single signature accepting string vs object; rename or unify to avoid retry/history/options divergence
+  - Char ceiling enforced only at merge, after collecting up to 600 passages per tab — enforce/check during collect to avoid wasted injection and payload work
+  - ext-smoke BLOCKED 23/42 leaves merged search unverified live; blocked-by-rate-limit path needs deterministic test, not an exit-2 claim
+  - `restricted` conflates user-denied, no-permission, and gone-tab failures, overstating deny vs system errors in UI note

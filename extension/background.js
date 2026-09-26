@@ -290,7 +290,7 @@ const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
 async function collectFromTabs(currentTabId, budget) {
   // Normalised shape on every return: callers never have to guess which fields exist.
-  const skipped = { blocked: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
+  const skipped = { blocked: 0, denied: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
   const done = (patch) => ({ on: true, tabs: [], perTab: 0, skippedNote: "", skipped, ...patch });
   budget = Number.isFinite(budget) ? Math.floor(budget) : 0; // a bad budget reads nothing, never NaN
   if (budget <= 0) return done({ skippedNote: "no room" }); // nothing to read, nothing to ask
@@ -334,7 +334,7 @@ async function collectFromTabs(currentTabId, budget) {
       continue;
     }
     if (denied(t.url)) {
-      skipped.restricted++; // the user said no to this host
+      skipped.denied++; // the user put this host on the deny list
       continue;
     }
     if (candidates.length >= CROSS_MAX_TABS) {
@@ -454,7 +454,7 @@ async function searchWithTabs({ query, passages, currentTabId }) {
       // Only well-formed passages cross the boundary: an id and non-empty text.
       if (typeof b?.id !== "string" || typeof b.text !== "string" || !b.text.length) continue;
       if (chars + b.text.length > CROSS_CHARS) {
-        skipped.budget++;
+        gathered.skipped.budget++; // the collector's own bucket, not a fresh variable
         done = true;
         break;
       }

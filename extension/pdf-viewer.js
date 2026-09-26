@@ -177,7 +177,9 @@ function lazyPaint(pages) {
     },
     { rootMargin: "300% 0px" },
   );
-  for (const [n, entry] of pages) if (n > 2) far.observe(entry.wrap);
+  // Observe every page for "far away" — including the first two, which are painted
+  // eagerly and would otherwise pin their buffers for the life of the document.
+  for (const [, entry] of pages) far.observe(entry.wrap);
   return io;
 }
 
@@ -229,7 +231,13 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   });
   const sizes = items.map((i) => i.size).sort((a, b) => a - b);
   const line = sizes[Math.floor(sizes.length / 2)] || 12;
-  const pageWidth = div.clientWidth || Math.max(...items.map((i) => i.left + i.w), 1);
+  // A loop, not Math.max(...items): a page with tens of thousands of spans would blow
+  // the argument limit of a spread call.
+  let pageWidth = div.clientWidth || 0;
+  if (!pageWidth) {
+    for (const i of items) pageWidth = Math.max(pageWidth, i.left + i.w);
+  }
+  pageWidth = pageWidth || 1;
   skipped.considered += items.length; // the spans this page actually contributed
 
   // 1. group into visual lines (same vertical band), sorted left→right, then split a
@@ -255,10 +263,13 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   for (const ln of runs) ln.items.sort((a, b) => a.left - b.left);
   const lines = runs;
   // One measured read per line (not per span): a full-width test needs the real right
-  // edge, and measuring the last item of each line is enough for it.
+  // edge. Both edges are taken in screen space, so the comparison stays correct under
+  // zoom or a CSS transform (style.left alone is in the layer's own units).
+  const layerBox = div.getBoundingClientRect();
   for (const ln of lines) {
     const last = ln.items[ln.items.length - 1];
-    ln.right = last.left + (last.span.getBoundingClientRect().width || last.w);
+    ln.right = last.span.getBoundingClientRect().right;
+    ln.leftPx = ln.items[0].span.getBoundingClientRect().left;
   }
 
   // 2. Reading order in bands. A full-width line (a title, a table, a footnote rule)
@@ -268,7 +279,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   //    the place it has on the page. A column order is only trusted when every
   //    cluster in that band really holds several lines (an indented list or a single
   //    centred line is not a column).
-  const isFullWidth = (ln) => ln.right - ln.items[0].left > pageWidth * 0.8;
+  const isFullWidth = (ln) => ln.right - ln.leftPx > layerBox.width * 0.8;
   const units = [];
   let band = null;
   for (const ln of lines) {
@@ -357,12 +368,10 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
     for (const it of ln.items) {
       const tooLong = text && text.length + it.data.length > CHUNK_MAX_CHARS;
       if (tooLong) flush();
-      // De-hyphenate a line break: the hyphen goes away, so the word reads whole
-      // ("trans-" + "former" → "transformer", "café-" + "teria" → "caféteria").
-      // \p{L} covers accented and non-Latin letters, not just A–Z. A genuine hyphen at
-      // a line break is indistinguishable from a split word in a PDF text layer, so a
-      // word like "well-" + "known" becomes "wellknown" — a known, accepted trade-off.
-      const prevEndsHyphen = text.endsWith("-") && /^\p{L}/u.test(it.data);
+      // De-hyphenate a *line break* only: the first item of a visual line is where a
+      // word may have been split. Inside a line, "well-known" keeps its hyphen.
+      const isLineStart = it === ln.items[0];
+      const prevEndsHyphen = isLineStart && text.endsWith("-") && /^\p{L}/u.test(it.data);
       let start;
       if (!text.length) {
         start = 0;
@@ -440,11 +449,20 @@ async function main() {
 
   for (let n = 1; n <= doc.numPages; n++) {
     try {
-      // A page that never finishes rendering must not stall the document.
+      // A page that never finishes rendering must not stall the document — and a page
+      // that finishes *after* its deadline is cleaned up instead of being left in the
+      // DOM as an orphan nobody tracks.
+      const built = buildPage(doc, n, width);
       const entry = await Promise.race([
-        buildPage(doc, n, width),
+        built,
         new Promise((_, reject) => setTimeout(() => reject(new Error(`page ${n} timed out`)), 10_000)),
       ]);
+      built.then((late) => {
+        if (late && !pages.has(n)) {
+          late.free();
+          late.wrap.remove();
+        }
+      });
       pages.set(n, entry);
       ui.msg.textContent = `page ${n} of ${doc.numPages}`;
       ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
@@ -481,7 +499,7 @@ async function main() {
 
   const stats = {
     chunksConsidered: skipped.short + skipped.dedupe + skipped.capped + blocks.length, // block-sized chunks
-    skipped: skipped.short + skipped.dedupe + skipped.capped,
+    skipped: skipped.short + skipped.dedupe + skipped.capped + skipped.cappedPages + skipped.pageErrors,
     skippedDetail: skipped,
     blocks: blocks.length, // document totals; collect() reports what it actually returned
     chars,
