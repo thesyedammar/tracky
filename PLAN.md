@@ -88,11 +88,11 @@ Done when: panel opens on a real site and shows the helper's reply.
 Results (2026-09-27 IST): real-gesture proof — Chrome headed in Xvfb, xdotool presses the actual Alt+K at OS level (this is what grants activeTab; a programmatic inject was correctly refused by Chrome first — probe proved synthetic keys can't trigger accelerators, harness rebuilt to use the real gesture). **15/15 checks green twice: local fixture AND en.wikipedia.org** — panel injected + visible, shows the live helper reply `helper 0.4.0 · jev-1.13-free · ready` (asserted against the helper's own /api/health payload), Esc closes, second gesture reopens, file:// shows the × badge and injects nothing. Screenshots visually verified (dark glass panel, legible over dark + light pages, no clipping). Judge: 8.4 → 8.4 → 8.2 → **8.7/10 accept** (4 loops; ledger in docs/judge-report.md).
 
 ### Phase 6 — Extension reads pages
-- [ ] 6.1 extension/collect.js — readable blocks, skip rules, caps (600 blocks / 400k chars max)
-- [ ] 6.2 Query → collect → POST; helper logs counts only
-- [ ] 6.3 Unsupported-page friendly message (PDF viewer, chrome://)
+- [x] 6.1 `extension/collect.js` — readable blocks, skip rules, caps (600 blocks / 400k chars / 20k per block / 40-char min), trim + dedupe
+- [x] 6.2 Query → collect → POST; helper logs counts only
+- [x] 6.3 Unsupported-page friendly message (PDF viewer, chrome://) — tooltip + × badge
 
-Done when: Wikipedia → helper sees 100+ real passages.
+Done when: Wikipedia → helper sees 100+ real passages. ✅ **107 passages** (`/wiki/Lease`), 2–3 matches @1.4 s · fixture 9 passages → 6 matches @723 ms · smoke 20/20 both targets · judge 8.2 → **8.7/10 accept**
 
 ### Phase 7 — Panel results (+ trust features)
 - [ ] 7.1 Match list (sentence + score, best-first)

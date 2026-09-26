@@ -203,3 +203,32 @@ Every artifact of Tracky passes through an independent judge: **Muse Spark 1.3 (
   - Make smoke crash-safe: wrap live health urlopen in try/fail check and use try/finally for ctx/httpd/profile cleanup; check file:// gesture return
   - Clear send() timeout on settle to avoid dangling 3s timer per ping
   - Reset pinging suppression correctly for close/open during in-flight ping and clear badge background color on success
+
+### Phase 6 — extension reads pages (collector + live search) — 8.2/10 🟡
+- 27 Sept 2026, 2:52 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/collect.js, extension/background.js, extension/content.js, scripts/ext-smoke.py, spikes/collect-debug.py
+- correctness **8.4** · craft **8.7** · robustness **7.9** · performance **7.6** · polish **8.6**
+- top fixes:
+  - Remove querySelector(BLOCK_SELECTOR) per DIV/SPAN inside acceptNode — O(N^2) on large pages; precompute block set or propagate has-block-descendant flag during walk
+  - Validate helper results shape before render — missing/non-numeric score/offset/sentence currently yields NaN% or TypeError mapped to misleading HELP_FIX
+  - Filter nested SKIP_STRUCT/roles/aria-hidden/hidden children in extractText and enforce caps strictly + trim passages; container check must ignore invisible/skipped blocks
+  - Unify Chrome discovery and fail-fast: collect-debug.py IndexErrors with no binary and ignores TRACKY_CHROME; ext-smoke default MIN_PASSAGES=8 does not enforce 100+ passage bar
+  - Fix status semantics: zero matches uses pulsing wait dot, 502 mapped to not-helperDown, and ms falls back to 0 ms when stats missing
+
+### Phase 6 — extension reads pages (loop 2) — 8.7/10 🟢
+- 27 Sept 2026, 2:55 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/collect.js, extension/background.js, extension/content.js, scripts/ext-smoke.py, spikes/collect-debug.py
+- correctness **8.6** · craft **8.8** · robustness **8.2** · performance **9.1** · polish **8.9**
+- top fixes:
+  - Unify validation: runSearch counts with sentence-only filter while renderResults requires finite score, so count can disagree with rendered hits; also Number.isFinite(r.offset) rejects numeric-string offsets that should coerce via Number(r.offset), and esc(r.passageId) renders "undefined" when missing
+  - Clip divergence: text clipped to 20k chars but registry keeps full-length segments, so future highlight offsets can exceed clipped text — clip segments or store unclipped length explicitly
+  - Collector throw misclassified: exception from window.__trackyCollect() falls into generic catch that shows HELP_FIX helper-not-running instead of a reader-failed message
+  - hasDirectLongText never early-exits and allocates trim() per text node; SKIP_TAGS check is uppercase-only so lowercase svg tagName can leak SVG text
+  - Gray zero uses implicit setStatus("",...) relying on default .dot; add explicit neutral class instead of empty-string kind
+
+## Phase 6 — extension reads pages (collector + live search)
+
+| loop | score | verdict | what changed |
+|---|---|---|---|
+| 1 | 8.2 🟡 | good | first pass: TreeWalker collector, search relay, live smoke against helper |
+| 2 | **8.7 🟢** | **accept** | container-fallback cost reordered (measured 4–7 ms/article), results sanitized before render, nested skip-rules in extraction + exact trimmed segment map, harness defaults (100 passages on real sites), honest status semantics (idle dot for zero matches, structured HTTP ≠ helper-down, client-duration fallback) |
+
+Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 20/20 on the fixture AND on Lease — helper saw **107 passages**, matches rendered, first match a real escrow-deposit sentence @1.4 s · screenshot visually verified. Advisories from the accept folded in the same commit (unified sanitizeResults, clipped segment map, collector-throw message, early-exit container test, lowercase-SVG tag guard, explicit `.dot.idle`).

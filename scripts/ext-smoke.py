@@ -14,6 +14,7 @@ Exit: 0 = all checks passed, 1 = something failed (details printed).
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -183,6 +184,37 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
             check("panel text carries the live helper version", health["version"] in text, f"live {health['version']}")
             check("panel text carries the live helper model", health["model"] in text, f"live {health['model']}")
 
+        # --- type a query, press Enter, and watch a real search happen ---
+        query = os.environ.get("TRACKY_SMOKE_QUERY") or "hidden charges"
+        real_site = bool(os.environ.get("TRACKY_SMOKE_URL"))
+        min_passages = int(os.environ.get("TRACKY_SMOKE_MIN_PASSAGES") or ("100" if real_site else "8"))
+        page.keyboard.type(query, delay=12)
+        page.keyboard.press("Enter")
+        text2 = ""
+        for _ in range(600):  # up to ~60 s: big pages run several serial passes
+            text2 = read_status(page)
+            if "match" in text2 or "No meaning" in text2 or "failed" in text2 or "helper not running" in text2:
+                break
+            time.sleep(0.1)
+        check("search ran against the live helper", "match" in text2, text2)
+        seen = -1
+        m = re.search(r"(\d+) passages", text2)
+        if m:
+            seen = int(m.group(1))
+        check("helper saw the page's passages", seen >= min_passages, f"{seen} passages (min {min_passages})")
+        hits = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const r = h && h.shadowRoot && h.shadowRoot.querySelector('#t-results');"
+            " return r ? r.querySelectorAll('.hit').length : -1; }"
+        )
+        check("matches rendered in the panel", hits >= 1, f"{hits} hits")
+        first_sentence = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const s = h && h.shadowRoot && h.shadowRoot.querySelector('.hit .sentence');"
+            " return s ? s.textContent : ''; }"
+        )
+        check("first match quotes a real sentence", len(first_sentence) >= 20, first_sentence[:90])
+
         shot = OUT / "tracky-panel.png"
         page.screenshot(path=str(shot))
         check("screenshot saved", shot.exists(), str(shot))
@@ -219,6 +251,13 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
             time.sleep(0.1)
         check("file:// gesture delivered", file_gesture)
         check("unsupported page shows the × badge", badge == "×", f"badge={badge!r}")
+        title_tip = worker.evaluate(
+            """async () => {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                return chrome.action.getTitle({ tabId: tab.id });
+            }"""
+        )
+        check("unsupported page tooltip explains why", "can't read" in (title_tip or ""), title_tip)
         check("no panel injected on file://", page.evaluate("!document.getElementById('tracky-root')"))
     finally:
         ctx.close()

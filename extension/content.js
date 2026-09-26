@@ -78,11 +78,24 @@
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
       .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
       .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
+      .dot.idle { background: #8A94A6; }
       .dot.wait { background: #F5C453; animation: tPulse 1.1s ease-in-out infinite; }
       @keyframes tPulse { 50% { opacity: .35; } }
       @media (prefers-reduced-motion: reduce) { .dot.wait { animation: none; } }
       .hint { color: #7C8698; font-size: 11px; padding: 0 12px 11px; }
       kbd { background: rgba(255, 255, 255, .08); border-radius: 4px; padding: 1px 5px; font: 10px ui-monospace, monospace; }
+      .results { display: none; max-height: 320px; overflow: auto; padding: 2px 12px 10px; }
+      .results.open { display: block; }
+      .hit {
+        padding: 8px 10px; border-radius: 10px; margin-bottom: 7px;
+        background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .06);
+      }
+      .hit:last-child { margin-bottom: 2px; }
+      .hit .score { display: inline-block; min-width: 36px; margin-right: 7px; color: #F5C453; font-weight: 650; font-variant-numeric: tabular-nums; }
+      .hit .sentence { color: #DEE5EF; }
+      .empty { color: #8A94A6; padding: 8px 2px 4px; }
+      .results::-webkit-scrollbar { width: 8px; }
+      .results::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 8px; }
     </style>
     <div class="wrap" role="dialog" aria-label="Tracky — search this page by meaning">
       <div class="panel">
@@ -96,10 +109,11 @@
           <input type="text" spellcheck="false" autocomplete="off"
             placeholder="Search this page by meaning…" aria-label="Search this page by meaning">
         </div>
+        <div class="results" id="t-results" aria-live="polite"></div>
         <div class="status" aria-live="polite">
           <span class="dot wait" id="t-dot"></span><span id="t-status">checking the helper…</span>
         </div>
-        <div class="hint">Finds ideas, not just letters — then quotes the exact sentences. <kbd>Esc</kbd> closes.</div>
+        <div class="hint">Finds ideas, not just letters — then quotes the exact sentences. <kbd>Enter</kbd> search · <kbd>Esc</kbd> close.</div>
       </div>
     </div>`;
 
@@ -187,15 +201,97 @@
     true,
   );
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
+  const esc = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const resultsEl = $("#t-results");
+  const showResults = (html) => {
+    resultsEl.innerHTML = html;
+    resultsEl.classList.toggle("open", html !== "");
+  };
+
+  const sanitizeResults = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+      .map((r) => ({
+        passageId: typeof r?.passageId === "string" ? r.passageId : "",
+        sentence: typeof r?.sentence === "string" ? r.sentence : "",
+        score: Number(r?.score),
+        offset: Number(r?.offset),
+      }))
+      .filter((r) => r.sentence.length > 0 && Number.isFinite(r.score));
+
+  function renderResults(query, results) {
+    if (!results.length) {
+      showResults(`<div class="empty">No meaning matches for “${esc(query)}”.</div>`);
+      return;
+    }
+    showResults(
+      results
+        .map(
+          (r) => `<div class="hit" data-passage="${esc(r.passageId)}" data-offset="${Number.isFinite(r.offset) ? r.offset : 0}">
+            <span class="score">${Math.round(r.score * 100)}%</span><span class="sentence">${esc(r.sentence)}</span>
+          </div>`,
+        )
+        .join(""),
+    );
+  }
+
+  let searching = false;
+  async function runSearch() {
     const q = input.value.trim();
     if (!q) {
       ping();
       return;
     }
-    // Panel skeleton: the engine + helper are live; wiring search lands next step.
-    setStatus("ok", "engine + helper are live — search wiring arrives in the next build step");
+    if (searching) return;
+    searching = true;
+    try {
+      if (typeof window.__trackyCollect !== "function") {
+        setStatus("bad", "page reader missing — reload the page and try again");
+        return;
+      }
+      setStatus("wait", "reading the page…");
+      let collected;
+      try {
+        collected = window.__trackyCollect();
+      } catch {
+        setStatus("bad", "could not read this page — try reloading it");
+        showResults("");
+        return;
+      }
+      if (!collected.blocks.length) {
+        setStatus("bad", "no readable text found on this page");
+        showResults("");
+        return;
+      }
+      setStatus("wait", `searching ${collected.blocks.length} passages…`);
+      const t0 = performance.now();
+      const reply = await send({ type: "tracky:search", query: q, passages: collected.blocks }, 45000);
+      if (!reply?.ok) {
+        const down = reply?.helperDown || /unreachable|not running|fetch/i.test(reply?.error ?? "");
+        setStatus("bad", down ? HELP_FIX : `search failed — ${reply?.error ?? "unknown error"}`);
+        showResults("");
+        return;
+      }
+      const results = sanitizeResults(reply.results);
+      renderResults(q, results);
+      const ms = Math.round(Number.isFinite(reply.stats?.ms) ? reply.stats.ms : performance.now() - t0);
+      const count = results.length;
+      setStatus(
+        count ? "ok" : "idle", // neutral dot: zero matches is a finished answer, not progress
+        `${collected.blocks.length} passages · ${count} match${count === 1 ? "" : "es"} · ${ms} ms`,
+      );
+    } catch (err) {
+      setStatus("bad", /timeout/i.test(err?.message ?? "") ? "search timed out — is the helper healthy?" : HELP_FIX);
+      showResults("");
+    } finally {
+      searching = false;
+    }
+  }
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    runSearch();
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
