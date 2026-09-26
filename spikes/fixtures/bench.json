@@ -1,0 +1,85 @@
+{
+  "name": "tracky benchmark v1 — car rental terms (fixed suite, real model)",
+  "documents": [
+    { "name": "tos", "file": "spikes/fixtures/tos.txt" }
+  ],
+  "cases": [
+    {
+      "name": "hidden costs when cancelling late",
+      "document": "tos",
+      "query": "how much do I pay if I cancel a day before pickup?",
+      "expect": {
+        "mustInclude": ["Rs.250"],
+        "mustNotInclude": ["Rs.5,000 is collected at pickup"],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "when the deposit comes back",
+      "document": "tos",
+      "query": "when do I get my security deposit back?",
+      "expect": {
+        "mustInclude": ["five business days"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "extra fees for returning a dirty car",
+      "document": "tos",
+      "query": "what happens if I return the car dirty or smelling of smoke?",
+      "expect": {
+        "mustInclude": ["Rs.1,200"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "is my data sold",
+      "document": "tos",
+      "query": "do they sell my personal information?",
+      "expect": {
+        "mustInclude": ["do not sell"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "insurance deductible and the waiver",
+      "document": "tos",
+      "query": "how much is the insurance deductible and can I reduce it?",
+      "expect": {
+        "mustInclude": ["Rs.15,000"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "who can rent (age rules)",
+      "document": "tos",
+      "query": "how old do I have to be to rent a car?",
+      "expect": {
+        "mustInclude": ["21 years"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "an honest empty: nothing about pets or animals",
+      "document": "tos",
+      "query": "what is the pet policy for dogs travelling in the car?",
+      "expect": {
+        "mustInclude": [],
+        "mustNotInclude": [],
+        "minResults": 0,
+        "maxResults": 8
+      }
+    }
+  ]
+}

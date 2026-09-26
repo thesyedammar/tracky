@@ -1,0 +1,19 @@
+{
+  "name": "tracky",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Ctrl+F that finds by meaning — and quotes the exact sentences it found.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server/server.mjs",
+    "test": "node --test server/test/*.test.mjs",
+    "package": "node scripts/package-extension.mjs",
+    "key-leak": "node scripts/key-leak-check.mjs",
+    "bench": "node scripts/benchmark.mjs",
+    "hostile": "node scripts/hostile-text.mjs",
+    "smoke": "xvfb-run -a python3 scripts/ext-smoke.py",
+    "smoke:wiki": "TRACKY_SMOKE_URL=https://en.wikipedia.org/wiki/Lease TRACKY_SMOKE_QUERY='security deposit' xvfb-run -a python3 scripts/ext-smoke.py",
+    "react": "xvfb-run -a python3 scripts/react-survival.py"
+  }
+}

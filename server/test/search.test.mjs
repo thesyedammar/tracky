@@ -131,6 +131,113 @@ test("a 429 says how long the quota window is, not 'a moment'", async () => {
   );
 });
 
+// ---------------------------------------------------------------- Phase 11.2
+// Forced-bad-answer tests: when the model misbehaves, the app must fail loudly —
+// it may never invent a sentence, guess an index, or answer about a passage that
+// does not exist. Each test below feeds a deliberately bad reply and asserts both
+// the rejection AND that nothing fabricated escapes.
+
+test("a fabricated sentence can never leak: text comes from the passage, not the reply", async () => {
+  // The model's own `text` field is never trusted — the sentence is taken from OUR
+  // sentence list by index and re-verified as an exact slice. So a fluent invention
+  // riding along with a valid index must not appear anywhere in the results.
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answers = {};
+    for (const p of body.state.passages) {
+      answers[p.id] = { type: "noul", noul: 0.95 };
+      if (body.questions[`focus_${p.id}`]) {
+        answers[`focus_${p.id}`] = {
+          type: "choice",
+          choice: "s0",
+          text: "A late fee of Rs.500 applies to every booking.", // invented, never used
+        };
+      }
+    }
+    return response({ answers });
+  };
+  const { results } = await searchText({ query: "fee", passages: makePassages(2) }, { config, fetchImpl });
+  assert.equal(results.length, 2);
+  for (const r of results) {
+    assert.equal(r.sentence, `Passage ${r.passageId.slice(1)} has a fee.`); // its own passage's sentence
+    assert.ok(!JSON.stringify(r).includes("Rs.500"), "the invented sentence must not escape anywhere");
+  }
+});
+
+test("a reply cannot smuggle its own offset or text — both come from our splitter", async () => {
+  // The sentence and its offset are produced by OUR splitSentences() and re-verified
+  // as an exact slice. A reply that also sends `text`/`start` fields must not be able
+  // to shift, extend, or replace what gets highlighted.
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answers = {};
+    for (const p of body.state.passages) {
+      answers[p.id] = { type: "noul", noul: 0.9 };
+      if (body.questions[`focus_${p.id}`]) {
+        answers[`focus_${p.id}`] = { type: "choice", choice: "s0", start: 999, text: "totally different" };
+      }
+    }
+    return response({ answers });
+  };
+  const { results } = await searchText({ query: "fee", passages: makePassages(2) }, { config, fetchImpl });
+  assert.equal(results.length, 2);
+  for (const r of results) {
+    assert.equal(r.sentence, `Passage ${r.passageId.slice(1)} has a fee.`);
+    assert.equal(r.offset, 0); // the splitter's offset, not the reply's 999
+    assert.ok(!JSON.stringify(r).includes("totally different"));
+  }
+});
+
+test("an out-of-range sentence index fails the search", async () => {
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answers = {};
+    for (const p of body.state.passages) {
+      answers[p.id] = { type: "noul", noul: 0.9 };
+      if (body.questions[`focus_${p.id}`]) answers[`focus_${p.id}`] = { type: "choice", choice: "s7" }; // only s0/s1 exist
+    }
+    return response({ answers });
+  };
+  await assert.rejects(
+    searchText({ query: "fee", passages: makePassages(2) }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 502 && /bad sentence pick/.test(e.message),
+  );
+});
+
+test("answers about a passage that was never sent are ignored, never surfaced", async () => {
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answers = allRelevant(body);
+    answers.p99 = { type: "noul", noul: 0.99 }; // invented id
+    return response({ answers });
+  };
+  const { results } = await searchText({ query: "fee", passages: makePassages(2) }, { config, fetchImpl });
+  assert.deepEqual(
+    results.map((r) => r.passageId).sort(),
+    ["p0", "p1"],
+  );
+  assert.ok(!JSON.stringify(results).includes("p99"), "an unknown passage id must not surface");
+});
+
+test("a score outside 0..1 is rejected, not clamped into a result", async () => {
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    return response({ answers: allRelevant(body, 7.5) }); // nonsense confidence
+  };
+  await assert.rejects(
+    searchText({ query: "fee", passages: makePassages(1) }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 502 && /bad score/.test(e.message),
+  );
+});
+
+test("a reply with no answers object fails loudly", async () => {
+  const fetchImpl = async () => response({ whatever: true });
+  await assert.rejects(
+    searchText({ query: "fee", passages: makePassages(1) }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 502 && /missing answers/.test(e.message),
+  );
+});
+
 // AbortSignal.timeout timers are unref'd in Node — a bare test process would
 // drain the event loop before the abort fires. Hold the loop until it does.
 const hangingFetch = () => (url, init) =>
