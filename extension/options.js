@@ -1,7 +1,7 @@
 // Tracky — options page logic. Reads/writes chrome.storage.local only; the
 // helper is contacted solely for a health check. No page text ever passes here.
 
-const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true };
+const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false };
 const HELPER = "http://127.0.0.1:4199";
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +19,7 @@ async function load() {
   const opts = { ...DEFAULTS, ...(v.trackyOpts ?? {}) };
   $("hijack").checked = opts.hijackCtrlF !== false;
   $("count").checked = opts.countSearches !== false;
+  $("cross").checked = opts.crossTab === true;
   $("hosts").value = Array.isArray(opts.disabledHosts) ? opts.disabledHosts.join("\n") : "";
   renderSpend(v.trackySpend);
 }
@@ -38,10 +39,51 @@ async function save() {
   const opts = {
     hijackCtrlF: $("hijack").checked,
     countSearches: $("count").checked,
+    crossTab: $("cross").checked,
     disabledHosts: hosts,
   };
   await chrome.storage.local.set({ trackyOpts: opts });
   flashSaved();
+}
+
+/** Cross-tab needs permission for the other tabs' addresses, and Chrome only grants
+ *  that from a click. Ask for exactly the origins of the tabs that are open right
+ *  now — never a blanket "<all_urls>" — and say plainly what happens if it is refused. */
+async function enableCrossTab() {
+  const box = $("cross");
+  const note = $("cross-note");
+  if (!box.checked) {
+    note.textContent = "Off — Tracky searches only the page you are on.";
+    note.className = "muted";
+    await save();
+    return;
+  }
+  try {
+    const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+    const origins = [...new Set(tabs.map((t) => (t.url ? new URL(t.url).origin + "/*" : null)).filter(Boolean))];
+    if (!origins.length) {
+      note.textContent = "No web pages are open right now — this will work as soon as some are.";
+      note.className = "muted";
+      await save();
+      return;
+    }
+    const granted = await chrome.permissions.request({ origins });
+    if (!granted) {
+      box.checked = false;
+      note.textContent = `Permission declined — Tracky can only search this page. (It asked for ${origins.length} open site(s), nothing more.)`;
+      note.className = "warn";
+      await save();
+      return;
+    }
+    note.textContent = `On — ${origins.length} open site(s) allowed. Only the text of a tab you search is read, and only when you search.`;
+    note.className = "ok";
+    await save();
+  } catch (e) {
+    box.checked = false;
+    note.textContent = `Could not enable: ${String(e?.message ?? e)}`;
+    note.className = "warn";
+    await save();
+  }
 }
 
 async function pingHelper() {
@@ -63,6 +105,7 @@ async function pingHelper() {
 
 $("hijack").addEventListener("change", save);
 $("count").addEventListener("change", save);
+$("cross").addEventListener("change", enableCrossTab);
 $("hosts").addEventListener("change", save);
 $("reset").addEventListener("click", async () => {
   await chrome.storage.local.set({ trackySpend: null });

@@ -177,6 +177,19 @@
       .export:hover { background: rgba(255, 255, 255, .08); color: #E9EDF5; }
       .results::-webkit-scrollbar { width: 8px; }
       .results::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 8px; }
+      /* Cross-tab (Phase 14): opt-in, so the toggle only appears when the options
+         page has enabled it. Other tabs' hits are a separate section, each labelled
+         with its tab — they are quotes from that tab, and clicking one goes there. */
+      .xtabs { display: flex; gap: 6px; padding: 0 12px 8px; align-items: center; }
+      .xtabs button { font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #cfd6e4; background: rgba(255,255,255,.06);
+        border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 5px 10px; cursor: pointer; }
+      .xtabs button[aria-pressed="true"] { background: rgba(212,175,55,.18); border-color: rgba(212,175,55,.5); color: #F5C453; }
+      .xtabs .note { font-size: 11px; color: #8A94A6; }
+      .xtab-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #9aa4b8;
+        padding: 10px 12px 4px; border-top: 1px solid rgba(255,255,255,.07); margin-top: 8px; }
+      .xtab-head .t { color: #cfd6e4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+      .xtab-head .u { color: #6f7a8d; font-size: 10.5px; }
+      .hit.other .jump::before { content: "↗"; }
     </style>
     <div class="wrap" role="dialog" aria-label="Tracky — search this page by meaning">
       <div class="panel">
@@ -193,6 +206,7 @@
         </div>
         <div class="recent" id="t-recent" hidden></div>
         <div class="scope" id="t-scope" hidden></div>
+        <div class="xtabs" id="t-xtabs" hidden></div>
         <div class="results" id="t-results" aria-live="off"></div>
         <div class="status" role="status" aria-live="polite">
           <span class="dot wait" id="t-dot"></span><span id="t-status">checking the helper…</span>
@@ -353,6 +367,8 @@
     return !!n && !!name && (name === n || name.endsWith(`.${n}`));
   };
   let opts = { hijackCtrlF: true, disabledHosts: [], countSearches: true };
+  let xSearch = false; // include other tabs in this search (only when the option is on)
+  let lastCross = null; // { tabs, passages, skipped, results } from the last cross-tab search
   let spend = null; // { date, searches, passages } — a counter, not a log
   const DENY_MSG = "Tracky is off for this site — manage it in the extension options";
   const isDenied = () => opts.disabledHosts?.some((h) => hostMatches(location.hostname, h)) ?? false;
@@ -366,12 +382,38 @@
         if (isDenied()) setStatus("idle", DENY_MSG);
         else if (statusText.textContent === DENY_MSG) ping();
       }
+      xSearch = opts.crossTab !== false; // default on once the option is enabled
+      renderXtabs();
     });
     chrome.storage?.onChanged?.addListener?.((changes) => {
-      if (changes?.trackyOpts?.newValue) opts = { ...opts, ...changes.trackyOpts.newValue };
+      if (changes?.trackyOpts?.newValue) {
+        opts = { ...opts, ...changes.trackyOpts.newValue };
+        xSearch = opts.crossTab !== false;
+        renderXtabs();
+      }
     });
   } catch {
     /* storage is optional — the panel works without it */
+  }
+
+  // ---- cross-tab (Phase 14): only ever shown when the options page turned it on ----
+  function renderXtabs() {
+    const box = $("#t-xtabs");
+    if (!box) return;
+    if (!opts.crossTab) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    const note = xSearch ? "included in the next search" : "off — this page only";
+    box.innerHTML = `<button type="button" id="t-xbtn" aria-pressed="${xSearch ? "true" : "false"}"
+        title="Also search your other open tabs (only their text, only when you search)">Other tabs</button>
+      <span class="note" id="t-xnote">${note}</span>`;
+    $("#t-xbtn")?.addEventListener("click", () => {
+      xSearch = !xSearch;
+      renderXtabs();
+      if (input.value.trim() && lastSearchKey) runSearch({ force: true });
+    });
   }
   const srEl = $("#t-sr");
   const announce = (text) => {
@@ -437,9 +479,10 @@
     return { start, end };
   }
 
-  function renderResults(query, literal, meaning) {
+  function renderResults(query, literal, meaning, cross) {
     lastResults = [...literal, ...meaning];
-    if (!lastResults.length) {
+    const crossHits = Array.isArray(cross?.results) ? cross.results : [];
+    if (!lastResults.length && !crossHits.length) {
       showResults(
         `<div class="empty">No meaning matches for “${esc(query)}”.<div class="tip">Tracky only quotes sentences that already exist on this page — try rephrasing the question.</div></div>`,
       );
@@ -449,8 +492,9 @@
     // Answer card: the top sentences, verbatim, with receipt chips. The server
     // never composes this — the client only re-shows what was found.
     const top = (meaning.length ? meaning : literal).slice(0, 2);
-    parts.push(
-      `<div class="card">
+    if (top.length) {
+      parts.push(
+        `<div class="card">
         <div class="card-title">What this page says</div>
         ${top
           .map(
@@ -460,7 +504,8 @@
           .join("")}
         <div class="card-foot">Quoted from this page — nothing invented. Tap a number to see it in context.</div>
       </div>`,
-    );
+      );
+    }
     if (literal.length) {
       parts.push(`<div class="group">Exact words · ${literal.length}</div>`);
       parts.push(literal.map((r, i) => hitHtml(r, i, "exact")).join(""));
@@ -469,8 +514,58 @@
       parts.push(`<div class="group">${literal.length ? "By meaning" : "Matches"} · ${meaning.length}</div>`);
       parts.push(meaning.map((r, i) => hitHtml(r, literal.length + i, "meaning")).join(""));
     }
+    if (crossHits.length) parts.push(crossSection(crossHits, cross));
     parts.push(`<div class="results-foot"><button class="export" type="button">Copy all as markdown</button></div>`);
     showResults(parts.join(""));
+  }
+
+  /** Other tabs' hits, grouped by tab. Each quote is labelled with the tab it came
+   *  from; clicking it brings that tab forward and runs the same question there. */
+  function crossSection(hits, meta) {
+    const byTab = new Map();
+    for (const r of hits) {
+      const key = r.tab?.tabId ?? -1;
+      if (!byTab.has(key)) byTab.set(key, { tab: r.tab, rows: [] });
+      byTab.get(key).rows.push(r);
+    }
+    const out = [`<div class="group">In your other tabs · ${hits.length}</div>`];
+    for (const [, { tab, rows }] of byTab) {
+      const title = tab?.title ?? "another tab";
+      let host = "";
+      try {
+        host = new URL(tab?.url ?? "").hostname;
+      } catch {
+        host = "";
+      }
+      out.push(
+        `<div class="xtab-head"><span class="t" title="${esc(title)}">${esc(clip(title))}</span><span class="u">${esc(host)}</span></div>`,
+      );
+      out.push(
+        rows
+          .map(
+            (r, i) => `<div class="hit other" data-xindex="${hits.indexOf(r)}">
+        <button class="jump" type="button" title="Open that tab and run this question there">
+          <span class="rank">${i + 1}</span><span class="score">${Math.round((r.score ?? 0) * 100)}%</span><span class="sentence">${esc(clip(r.sentence))}</span>
+        </button>
+        <button class="copy" aria-label="Copy this quote" title="Copy this quote">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>`,
+          )
+          .join(""),
+      );
+    }
+    const skipped = meta?.skipped ?? {};
+    const notes = [];
+    if (skipped.restricted) notes.push(`${skipped.restricted} tab(s) Tracky has no permission for`);
+    if (skipped.denied) notes.push(`${skipped.denied} skipped (denied or not a web page)`);
+    if (skipped.over) notes.push(`${skipped.over} beyond the 6-tab limit`);
+    out.push(
+      `<div class="card-foot" style="padding:8px 12px 2px">Quoted from your other tabs — nothing leaves them until you search.${
+        notes.length ? ` Skipped: ${notes.join(", ")}.` : ""
+      }</div>`,
+    );
+    return out.join("");
   }
 
   // ---- why-chips: one extra helper pass that only PICKS a reason from its fixed list ----
@@ -705,8 +800,10 @@
     showStatusBriefly("ok", marked ? "showing that sentence on the page" : "showing the paragraph — that sentence couldn't be marked");
   }
 
-  async function copyQuote(index) {
-    const r = lastResults[index];
+  async function copyQuote(index, xindex) {
+    // A cross-tab row has no local passage to highlight, but its quote is real text —
+    // copying works the same way (xindex selects from the other-tabs list).
+    const r = xindex != null ? lastCross?.results?.[Number(xindex)] : lastResults[index];
     if (!r) return;
     try {
       await navigator.clipboard.writeText(r.sentence);
@@ -730,6 +827,20 @@
     }
   }
 
+  /** Open another tab and run this same question in its own panel (Phase 14). */
+  async function jumpToOtherTab(xindex) {
+    const r = lastCross?.results?.[xindex];
+    const tabId = r?.tab?.tabId;
+    const q = input.value.trim();
+    if (tabId == null) {
+      showStatusBriefly("bad", "that tab is gone — run the search again");
+      return;
+    }
+    showStatusBriefly("wait", "opening that tab…");
+    const reply = await send({ type: "tracky:jump", tabId, query: q }, 8000);
+    if (!reply?.ok) showStatusBriefly("bad", `could not open that tab — ${reply?.error ?? "unknown"}`);
+  }
+
   resultsEl.addEventListener("click", (e) => {
     const chip = e.target?.closest?.(".chip"); // answer-card receipt chips
     if (chip) {
@@ -742,12 +853,16 @@
     }
     if (e.target?.closest?.(".copy")) {
       const hit = e.target.closest(".hit");
-      if (hit) copyQuote(Number(hit.dataset.index));
+      if (hit) copyQuote(Number(hit.dataset.index ?? -1), hit.dataset.xindex);
       return;
     }
     const jump = e.target?.closest?.(".jump");
     if (jump) {
       const hit = jump.closest(".hit");
+      if (hit?.dataset.xindex != null) {
+        jumpToOtherTab(Number(hit.dataset.xindex));
+        return;
+      }
       if (hit) jumpTo(Number(hit.dataset.index));
     }
   });
@@ -842,22 +957,31 @@
       }
       setStatus("wait", `searching ${scoped.length} passages…`);
       const t0 = performance.now();
-      const reply = await send({ type: "tracky:search", query: q, passages: scoped }, 45000);
+      // Cross-tab (Phase 14): the background gathers the other tabs' text and merges it
+      // into this one request, so ranking happens across everything at once. The timeout
+      // is longer because more passages means more batches.
+      const wantCross = !!(xSearch && opts.crossTab);
+      if (wantCross) setStatus("wait", `reading your other tabs…`);
+      const reply = await send({ type: "tracky:search", query: q, passages: scoped, crossTab: wantCross }, wantCross ? 90000 : 45000);
       if (!reply?.ok) {
         const down = reply?.helperDown || /unreachable|not running|fetch/i.test(reply?.error ?? "");
         setStatus("bad", down ? HELP_FIX : `search failed — ${reply?.error ?? "unknown error"}`);
         showResults("");
         return;
       }
-      const meaning = sanitizeResults(reply.results);
+      const all = sanitizeResults(reply.results);
+      const cross = all.filter((r) => r.tab);
+      const meaning = all.filter((r) => !r.tab);
+      lastCross = reply.crossTab?.enabled ? { ...reply.crossTab, results: cross } : null;
       // Hybrid: exact-word matches over the same passages, deduped against meaning.
       const seenSentences = new Set(meaning.map((r) => r.sentence));
       const literalOnly = literalMatches(q, scoped).filter((r) => !seenSentences.has(r.sentence));
-      renderResults(q, literalOnly, meaning);
+      renderResults(q, literalOnly, meaning, lastCross);
       const ms = Math.round(Number.isFinite(reply.stats?.ms) ? reply.stats.ms : performance.now() - t0);
       const count = meaning.length + literalOnly.length;
       statsKind = count ? "ok" : "idle"; // neutral dot: zero matches is a finished answer, not progress
-      statsLine = `${scoped.length} passages · ${count} match${count === 1 ? "" : "es"}${scope ? ` · “${scope}”` : ""} · ${ms} ms`;
+      const xtabNote = lastCross?.tabs ? ` · +${lastCross.tabs} tab${lastCross.tabs === 1 ? "" : "s"}${cross.length ? ` (${cross.length})` : ""}` : "";
+      statsLine = `${scoped.length} passages · ${count} match${count === 1 ? "" : "es"}${scope ? ` · “${scope}”` : ""}${xtabNote} · ${ms} ms`;
       setStatus(statsKind, statsLine);
       lastSearchKey = key;
       pushHistory(q);
@@ -979,6 +1103,13 @@
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "tracky:open") open();
+    // Cross-tab jump (Phase 14): this tab was opened from another tab's results, so
+    // run that question here without the user retyping it.
+    if (msg?.type === "tracky:run" && typeof msg.query === "string" && msg.query.trim()) {
+      open();
+      input.value = msg.query;
+      runSearch({ force: true });
+    }
   });
 
   window.__tracky = { open, close, ping, version: VERSION };

@@ -244,6 +244,128 @@ async function runWhy({ query, matches }) {
   return res.json(); // { reasons, stats }
 }
 
+// ---------------------------------------------------------------- Phase 14: cross-tab
+//
+// Searching your other open tabs is opt-in (options page), bounded (never more than
+// the helper's 1,200-passage ceiling in total), and honest about what it skipped.
+// Only collect.js is injected into other tabs — no panel, no UI, nothing runs there
+// until you ask. Tabs you have denied are never touched, and Chrome's own
+// restrictions (chrome://, the web store, PDFs) are counted, not guessed at.
+
+const CROSS_MAX_TABS = 6;
+const CROSS_TOTAL = 600; // our own cap on how much other tabs may add
+const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
+
+/** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
+async function collectFromTabs(currentTabId, budget) {
+  const opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
+  const skipped = { off: 0, denied: 0, restricted: 0, empty: 0, current: 0, over: 0 };
+  if (!opts.crossTab) return { on: false, tabs: [], skipped, skippedNote: "off" };
+
+  let tabs = [];
+  try {
+    // Chrome only lists tabs this extension may touch: without a granted origin the
+    // tab is invisible here, so it can never be read by accident.
+    tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+  } catch {
+    return { on: true, tabs: [], skipped, skippedNote: "no access" };
+  }
+  const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / CROSS_MAX_TABS)));
+  const picked = [];
+  for (const t of tabs) {
+    if (t.id == null) continue;
+    if (t.id === currentTabId) {
+      skipped.current++;
+      continue;
+    }
+    if (picked.length >= CROSS_MAX_TABS) {
+      skipped.over++;
+      continue;
+    }
+    if (isUnsupported(t.url) || isPdf(t.url) || (await disabledFor(t.url))) {
+      skipped.denied++;
+      continue;
+    }
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: t.id },
+        func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
+        args: [perTab],
+      });
+      const blocks = res?.result?.blocks ?? [];
+      if (!blocks.length) {
+        skipped.empty++;
+        continue;
+      }
+      picked.push({ tabId: t.id, title: t.title || t.url, url: t.url, blocks });
+    } catch {
+      skipped.restricted++; // no permission for that origin, or the tab is gone
+    }
+  }
+  return { on: true, tabs: picked, skipped, perTab };
+}
+
+/** One search over this tab plus the others: local passage ids are untouched, other
+ *  tabs' passages continue the same id sequence, so every result maps back exactly. */
+async function searchWithTabs({ query, passages, currentTabId }) {
+  const local = Array.isArray(passages) ? passages : [];
+  const budget = Math.max(0, HELPER_PASSAGES_MAX - local.length);
+  const gathered = await collectFromTabs(currentTabId, budget);
+  if (!gathered.on) return { ...(await runSearch({ query, passages: local })), crossTab: { enabled: false } };
+  if (!gathered.tabs.length) {
+    return { ...(await runSearch({ query, passages: local })), crossTab: { enabled: true, tabs: 0, passages: 0, skipped: gathered.skipped } };
+  }
+
+  const map = new Map();
+  const merged = [...local];
+  for (const t of gathered.tabs) {
+    for (const b of t.blocks) {
+      if (merged.length >= HELPER_PASSAGES_MAX || map.size >= budget) break;
+      const id = `p${merged.length}`;
+      map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
+      merged.push({ id, text: b.text });
+    }
+  }
+
+  const out = await runSearch({ query, passages: merged });
+  const results = (out.results ?? []).map((r) => {
+    const tab = map.get(r.passageId);
+    return tab ? { ...r, tab } : r;
+  });
+  return {
+    ...out,
+    results,
+    crossTab: {
+      enabled: true,
+      tabs: gathered.tabs.length,
+      passages: map.size,
+      skipped: gathered.skipped,
+      titles: gathered.tabs.map((t) => t.title),
+    },
+  };
+}
+
+/** Bring another tab to the front and run the same question in its own panel. */
+async function jumpToTab({ tabId, query }) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.tabs.update(tabId, { active: true });
+    if (tab?.windowId != null) {
+      try {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch {
+        /* window focus is a nicety, never a failure */
+      }
+    }
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["collect.js", "content.js"] });
+    await chrome.tabs.sendMessage(tabId, { type: "tracky:run", query });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "tracky:health") {
     checkHealth().then(
@@ -253,10 +375,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async reply
   }
   if (msg?.type === "tracky:search") {
-    runSearch(msg).then(
+    const tabId = _sender?.tab?.id;
+    const run = msg.crossTab && tabId != null ? searchWithTabs({ query: msg.query, passages: msg.passages, currentTabId: tabId }) : runSearch(msg);
+    run.then(
       (out) => sendResponse({ ok: true, ...out }),
       (err) => sendResponse({ ok: false, error: err?.message ?? "search failed", helperDown: !!err?.helperDown }),
     );
+    return true; // async reply
+  }
+  if (msg?.type === "tracky:jump") {
+    jumpToTab({ tabId: msg.tabId, query: msg.query }).then((out) => sendResponse(out));
     return true; // async reply
   }
   if (msg?.type === "tracky:why") {
