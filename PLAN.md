@@ -39,16 +39,17 @@ Done when: repo live, contract + mock committed, Hamdan building.
 - [x] 1.5 spikes/jev-sanity.mjs — sanity battery: controls, position bias, injection, stability
 
 Done when: three runs print real numbers; shape graduates to server/jev.mjs.
-Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the charge sentence (s1, confidence 1.0) @ 760ms · 1.4 **ten questions in ONE call** @ 742ms — relevant 0.88/0.88, junk 0.03–0.05, borderline 0.25 (sensibly separated). 1.5 sanity battery: injection ignored (0.02–0.03) · picks correct at first/middle/last positions · 3× re-runs stable ±0.04 · gray zone 0.62–0.66 near the 0.58 line (threshold tuning → Phase 11 benchmark). Response keys for the engine: `answers[q].noul`, `answers[q].choice` + `.probabilities` + `.confidence`, `usage`.
+Results (zen free route, 2026-09-26): 1.1 `noul` 0.99 @ 800ms · 1.3 picked the charge sentence (s1, confidence 1.0) @ 760ms · 1.4 **ten questions in ONE call** @ 742ms — relevant 0.88/0.88, junk 0.03–0.05, borderline 0.25 (sensibly separated). 1.5 sanity battery: injection ignored (0.02–0.03) · picks correct at first/middle/last positions · 3× re-runs stable ±0.04 · gray zone 0.62–0.66 near the 0.58 line (threshold tuning → Phase 11 benchmark). Response keys for the engine: `answers[q].noul`, `answers[q].choice` + `.probabilities` + `.confidence`, `usage`. Judge loop: spikes cleared at **8.7/10** (loop 4, 7.4→7.7→7.6→8.7) — full ledger in `docs/judge-report.md`.
 
 ### Phase 2 — Sentences + questions + validation (test-first)
-- [ ] 2.1 server/sentences.mjs — Intl.Segmenter + abbreviation guards, char offsets
-- [ ] 2.2 Spec-named tests (splits / guards / offsets)
-- [ ] 2.3 server/jev.mjs — request builder (relevance `noul` + focus `choice` per passage)
-- [ ] 2.4 server/validate.mjs — score 0–1, id must exist, else throw + tests
-- [ ] 2.5 spikes/fixtures/tos.txt — real Terms-of-Service fixture
+- [x] 2.1 server/sentences.mjs — Intl.Segmenter + abbreviation guards (case-insensitive: Rs./E.g./No./initials/lists/decimals), exact char offsets
+- [x] 2.2 Spec-named tests (splits / guards / offsets / throw-on-non-string)
+- [x] 2.3 server/jev.mjs — request builder (relevance `noul` + focus `choice` per passage; dup-id + BATCH_MAX=80 guards)
+- [x] 2.4 server/validate.mjs — score 0–1, id must exist, substring belt, canonical id regexes, rank-don't-cut policy + tests
+- [x] 2.5 spikes/fixtures/tos.txt — real Terms-of-Service fixture (41 sentences / 9 paragraphs)
+- [x] 2.6 server/env.mjs + env tests — fail-fast loader, whitespace/URL checks, key never leaves the server
 
-Done when: `node --test` green; fixture splits cleanly.
+Done when: `node --test` green; fixture splits cleanly. ✓ 47/47 green; fixture → 9 paragraphs / 41 sentences. Judge: 8.4 → **9.1/10 accept** (docs/judge-report.md).
 
 ### Phase 3 — Engine as a plain script (+ sweep)
 - [ ] 3.1 spikes/search-cli.mjs — file + query → ranked [score] sentence

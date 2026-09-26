@@ -43,3 +43,23 @@ Every artifact of Tracky passes through an independent judge: **Muse Spark 1.3 (
   - Harden loadEnv: silently ignores malformed lines, no export prefix or spaced KEY = value support, empty-string handling
   - Drift checks mask absent data with ??0/??1 and accept NaN/Infinity — explicitly require finite numbers
   - Fix polish nits: probsLine claims fixed-width but isn't, g3_rel key breaks key==passage-id convention used elsewhere
+
+### Phase 2 — engine core (sentences + builder + validator + env) — 8.4/10 🟡
+- 27 Sept 2026, 1:35 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/sentences.mjs, server/jev.mjs, server/validate.mjs, server/env.mjs, server/test/sentences.test.mjs, server/test/jev.test.mjs, server/test/validate.test.mjs
+- correctness **8.4** · craft **8.8** · robustness **7.8** · performance **9** · polish **8.2**
+- top fixes:
+  - Make abbreviation masking case-insensitive and complete: E.g./RS./NO./Fig./a.m./p.m. currently split; INITIAL_RE + ABBREV_RE miss capitalized variants
+  - Harden adjudication gate: validate passages array (else TypeError not 502), re-verify focusText is substring in rankResults, validate probabilities, reject p00/p01 leading-zero ids to match strict sN rule
+  - Add missing server/test/env.test.mjs and fix parseEnv: inline trailing comments, whitespace-only quoted values treated as present, no URL validation
+  - Guard builder against duplicate ids silently overwriting questions and unbounded 600-passage single request; document/enforce chunking
+  - splitSentences returns [] for non-string hiding bugs and LIST_RE/decimal handling is narrow; throw on non-string and protect decimals like 3.14
+
+### Phase 2 — engine core (loop 2) — 9.1/10 🟢
+- 27 Sept 2026, 1:42 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/sentences.mjs, server/jev.mjs, server/validate.mjs, server/env.mjs, server/test/sentences.test.mjs, server/test/jev.test.mjs, server/test/validate.test.mjs, server/test/env.test.mjs
+- correctness **9** · craft **9.2** · robustness **8.8** · performance **9.3** · polish **9**
+- top fixes:
+  - Mask all dots inside e.g./i.e./a.m./p.m. not just trailing dot; currently relies on Segmenter not splitting inner dot
+  - Harden buildRequest to throw SearchError on unprepared passages and missing query/model instead of raw TypeError
+  - Validate choice probabilities keys against criteria length, not just value ranges
+  - Trim JEV_BASE_URL before new URL() check and return; consider restricting to http(s)
+  - Clarify ofBest=0.55 naming (factor vs 45% drop) and guard sentinel collision if text contains \u0001
