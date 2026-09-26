@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Tracky — PDF</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-soft: #161922;
+    --line: #262b36;
+    --ink: #e8ecf4;
+    --ink-soft: #9aa4b8;
+    --accent: #d4af37;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #bar {
+    position: fixed; inset: 0 0 auto 0; height: 52px; z-index: 5;
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    background: rgba(15,17,21,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  #bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+  #bar b { font-weight: 600; letter-spacing: .2px; }
+  #name { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+  #meta { color: var(--ink-soft); margin-left: auto; font-variant-numeric: tabular-nums; }
+  #hint { color: var(--ink-soft); font-size: 12.5px; }
+  kbd {
+    font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink);
+    background: var(--bg-soft); border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 3px 5px;
+  }
+  #pages { padding: 68px 0 60px; display: flex; flex-direction: column; align-items: center; gap: 22px; transition: padding .28s ease; }
+  /* The panel floats on the right; when it is open the document slides left so it
+     is never covered (no re-render needed — the pages just re-center). */
+  body.panel-open #pages { padding-right: 392px; }
+  @media (prefers-reduced-motion: reduce) { #pages { transition: none; } }
+  .page { position: relative; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.45); border-radius: 3px; }
+  .page canvas { display: block; border-radius: 3px; }
+  /* pdf.js text layer — the spans are invisible but selectable, and they are what
+     Tracky highlights, so a hit glows on the PDF itself. */
+  .textLayer {
+    position: absolute; inset: 0; overflow: hidden; line-height: 1; opacity: 1;
+    forced-color-adjust: none; text-size-adjust: none;
+  }
+  .textLayer span, .textLayer br {
+    color: transparent; position: absolute; white-space: pre; cursor: text;
+    transform-origin: 0% 0%;
+  }
+  .textLayer span::selection { background: rgba(212,175,55,.35); }
+  .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; }
+  .textLayer .markedContent { top: 0; height: 0; }
+  ::highlight(tracky-hl) { background: rgba(212,175,55,.55); color: transparent; }
+  #load {
+    position: fixed; inset: 52px 0 0; display: grid; place-items: center; z-index: 4;
+    background: var(--bg); transition: opacity .25s ease;
+  }
+  #load.gone { opacity: 0; pointer-events: none; }
+  #load .box { text-align: center; color: var(--ink-soft); max-width: 520px; padding: 24px; }
+  #load .box b { color: var(--ink); display: block; margin-bottom: 8px; font-size: 15px; }
+  #load .bar { width: 260px; height: 3px; background: var(--bg-soft); border-radius: 3px; margin: 14px auto 0; overflow: hidden; }
+  #load .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+  #load .err { color: #ff9a8a; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <span class="dot"></span><b>Tracky</b>
+    <span id="name">…</span>
+    <span id="hint"><kbd>Alt</kbd>+<kbd>K</kbd> or <kbd>Ctrl</kbd>+<kbd>F</kbd> to search this document by meaning</span>
+    <span id="meta"></span>
+  </div>
+  <div id="pages"></div>
+  <div id="load"><div class="box"><b id="load-title">Opening the PDF…</b><span id="load-msg">reading the file</span><div class="bar"><i id="load-bar"></i></div></div></div>
+
+  <!-- A synchronous stub (its own file — MV3 forbids inline scripts) so the panel
+       gives an honest "still rendering" answer instead of "no text" if someone
+       searches in the first seconds. pdf-viewer.js replaces it once pages are up. -->
+  <script src="pdf-stub.js"></script>
+  <script src="content.js"></script>
+  <script type="module" src="pdf-viewer.js"></script>
+</body>
+</html>

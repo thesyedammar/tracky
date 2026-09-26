@@ -12,12 +12,12 @@ importScripts("shared.js"); // hostMatches / hostDenied — one definition, unit
 
 /** Pages where scripting is impossible or pointless (file:// needs an opt-in Chrome never grants here). */
 const UNSUPPORTED = /^(chrome|edge|about|devtools|chrome-extension|moz-extension|view-source|file):/i;
+const isPdf = (url) => !!url && /\.pdf(\?|#|$)/i.test(url);
 const isUnsupported = (url) =>
   !url ||
   UNSUPPORTED.test(url) ||
   url.includes("chrome.google.com/webstore") ||
-  url.includes("chromewebstore.google.com") ||
-  /\.pdf(\?|#|$)/i.test(url);
+  url.includes("chromewebstore.google.com");
 
 /** Small visual reply on the toolbar icon; cleared on every successful open. */
 const badgeState = new Map(); // tabId -> { timer, gen }
@@ -71,6 +71,47 @@ async function disabledFor(url) {
   }
 }
 
+/** Open the PDF reader tab for a .pdf URL.
+ *
+ *  http(s) PDFs need permission for their own origin before an extension page may
+ *  fetch them, so that request is made *first* in the click handler — still inside
+ *  the user gesture, which is the only moment Chrome allows it. file:// PDFs work
+ *  when "Allow access to file URLs" is on; the viewer says so plainly when it is not. */
+async function openPdf(tab, granted) {
+  const file = /^file:/i.test(tab.url);
+  if (file) {
+    let allowed = false;
+    try {
+      allowed = await chrome.extension.isAllowedFileSchemeAccess();
+    } catch {
+      /* API missing → assume not allowed and let the viewer explain */
+    }
+    if (!allowed) {
+      try {
+        await chrome.action.setTitle({
+          tabId: tab.id,
+          title: "Tracky needs 'Allow access to file URLs' (chrome://extensions → Tracky → Details) to read this PDF",
+        });
+      } catch {
+        /* tab gone */
+      }
+      await flash(tab.id, "!");
+      return;
+    }
+  }
+  if (!file && !granted) {
+    await flash(tab.id, "!");
+  }
+  const name = decodeURIComponent((tab.url.split("/").pop() || "document.pdf").split(/[?#]/)[0]);
+  const url = chrome.runtime.getURL("pdf.html") + `?src=${encodeURIComponent(tab.url)}&name=${encodeURIComponent(name)}`;
+  try {
+    await chrome.tabs.create({ url, active: true });
+    await clearBadge(tab.id);
+  } catch {
+    await flash(tab.id, "!");
+  }
+}
+
 async function openPanel(tab) {
   if (!tab || tab.id == null) return;
   if (isUnsupported(tab.url)) {
@@ -109,6 +150,27 @@ async function openPanel(tab) {
 // scripts/ext-smoke.py. Keeping the permission set at activeTab + scripting + storage.
 
 chrome.action.onClicked.addListener((tab) => {
+  // A PDF tab goes to the reader — and the origin permission is requested here,
+  // synchronously, while the click's user gesture is still live.
+  if (tab?.url && isPdf(tab.url)) {
+    if (/^https?:/i.test(tab.url)) {
+      let origin = null;
+      try {
+        origin = new URL(tab.url).origin + "/*";
+      } catch {
+        origin = null;
+      }
+      if (origin) {
+        chrome.permissions
+          .request({ origins: [origin] })
+          .then((granted) => openPdf(tab, granted))
+          .catch(() => openPdf(tab, false));
+        return;
+      }
+    }
+    openPdf(tab, true);
+    return;
+  }
   openPanel(tab);
 });
 

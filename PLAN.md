@@ -166,12 +166,24 @@ Done when: every box ticked with real evidence; numbers public.
 Done when: a stranger can install and run it from the README alone.
 
 ### Phase 13 — PDF mode [flagship]
-- [ ] 13.1 Detect PDF tab + offer the mode
-- [ ] 13.2 pdf.js text extraction (local, no upload)
-- [ ] 13.3 Overlay viewer: search + highlights inside it
-- [ ] 13.4 Fallback: send text to playground
+- [x] 13.1 Detect PDF tab + offer the mode (icon click → origin permission asked inside the
+      gesture → reader tab opens; file:// PDFs guided to "Allow access to file URLs")
+- [x] 13.2 pdf.js text extraction (local, no upload) — pdf.js 4.10.38 bundled in
+      extension/vendor/pdfjs (Apache-2.0, no remote code, isEvalSupported:false)
+- [x] 13.3 Overlay viewer: search + highlights inside it — extension/pdf.html renders every
+      page with a text layer, emits the SAME {blocks, stats, byId, sections} contract as
+      collect.js, so content.js's panel is reused unchanged; sections are the PDF's pages;
+      highlights paint through the Custom Highlight API on the PDF's own text; the document
+      slides out from under the open panel and back
+- [ ] 13.4 Fallback: send text to playground (waits on the playground)
+
+Verified: scripts/pdf-smoke.py — **16/16** on a real 15-page PDF (arxiv 1706.03762):
+15 canvases, 2490 text-layer spans, 38 blocks / 40,434 chars, every block rebuilt from its
+own spans with 0 mismatches, panel live, slide-aside both ways, highlight painted, 0 JS errors.
 
 Done when: a real PDF searched + highlighted where native Ctrl+F gives up.
+→ rendering/extraction/highlighting done and proven; the *search* half of this line needs the
+model route (rate-limited at the time of writing) — one live search on this PDF completes it.
 
 ### Phase 14 — Cross-tab search [stretch]
 - [ ] 14.1 Permission model

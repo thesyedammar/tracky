@@ -5,6 +5,7 @@
   "description": "Ctrl+F that finds by meaning, not letters — and quotes the exact sentences it found. Page text goes only to your own local helper.",
   "minimum_chrome_version": "105",
   "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js" },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "action": {

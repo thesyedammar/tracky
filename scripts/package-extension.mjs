@@ -29,6 +29,12 @@ const ALLOW = [
   "options.html",
   "options.js",
   "shared.js",
+  "pdf.html",
+  "pdf-viewer.js",
+  "pdf-stub.js",
+  "vendor/pdfjs/pdf.min.mjs",
+  "vendor/pdfjs/pdf.worker.min.mjs",
+  "vendor/pdfjs/LICENSE",
   "icons/icon16.png",
   "icons/icon32.png",
   "icons/icon48.png",
@@ -167,6 +173,17 @@ for (const name of ALLOW) {
 for (const name of ALLOW.filter((n) => n.endsWith(".json") || n.endsWith(".js") || n.endsWith(".html"))) {
   // (already scanned above — kept explicit so the intent is readable)
   void name;
+}
+
+// Every file an HTML page loads must be in the allowlist, or the shipped page
+// would be broken while the working tree looked fine.
+for (const name of ALLOW.filter((n) => n.endsWith(".html"))) {
+  const html = readFileSync(join(EXT, name), "utf8");
+  for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    const ref = m[1];
+    if (/^(https?:|data:|#)/.test(ref)) continue;
+    if (!ALLOW.includes(ref)) problems.push(`${name} loads "${ref}" which is not in the allowlist`);
+  }
 }
 
 if (problems.length) {
