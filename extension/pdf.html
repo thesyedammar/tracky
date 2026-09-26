@@ -33,8 +33,9 @@
   }
   #pages { padding: 68px 0 60px; display: flex; flex-direction: column; align-items: center; gap: 22px; transition: padding .28s ease; }
   /* The panel floats on the right; when it is open the document slides left so it
-     is never covered (no re-render needed — the pages just re-center). */
-  body.panel-open #pages { padding-right: 392px; }
+     is never covered (no re-render needed — the pages just re-center). The gap comes
+     from --panel-w, which pdf-viewer.js measures from the panel itself. */
+  body.panel-open #pages { padding-right: calc(var(--panel-w, 392px) + 16px); }
   @media (prefers-reduced-motion: reduce) { #pages { transition: none; } }
   .page { position: relative; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.45); border-radius: 3px; }
   .page canvas { display: block; border-radius: 3px; }

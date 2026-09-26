@@ -3,12 +3,26 @@
 // It must be a real file (MV3's CSP forbids inline scripts) and it must exist
 // before content.js, so a search started in the first seconds — while pdf.js is
 // still rendering — gets an honest "nothing readable yet" answer instead of a
-// crash. pdf-viewer.js replaces this with the real collector once pages are up.
+// crash. pdf-viewer.js replaces it with the real collector once pages are up, and
+// the shape here is deliberately identical to collect.js (same keys, same stats
+// fields, same maxBlocks option) so nothing downstream can tell the difference.
 window.__trackyPdfReady = false;
-window.__trackyCollect = function collectStub() {
+window.__trackyCollect = function collectStub({ maxBlocks = 600 } = {}) {
   return {
     blocks: [],
-    stats: { considered: 0, skipped: 0, blocks: 0, chars: 0, hash: 0, ms: 0, rendering: true },
+    stats: {
+      considered: 0,
+      skipped: 0,
+      skippedDetail: { short: 0, dedupe: 0, capped: 0, pageErrors: 0 },
+      blocks: 0,
+      chars: 0,
+      hash: 0,
+      ms: 0,
+      pages: 0,
+      spans: 0,
+      maxBlocks,
+      rendering: true, // the panel can say "still rendering" instead of "no text"
+    },
     byId: new Map(),
     sections: [],
   };

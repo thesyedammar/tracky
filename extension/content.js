@@ -837,7 +837,14 @@
       return;
     }
     showStatusBriefly("wait", "opening that tab…");
-    const reply = await send({ type: "tracky:jump", tabId, query: q }, 8000);
+    // send() can time out or the service worker can be asleep: never let that
+    // surface as an unhandled rejection — say what happened instead.
+    let reply = null;
+    try {
+      reply = await send({ type: "tracky:jump", tabId, query: q }, 8000);
+    } catch (err) {
+      reply = { ok: false, error: String(err?.message ?? err) };
+    }
     if (!reply?.ok) showStatusBriefly("bad", `could not open that tab — ${reply?.error ?? "unknown"}`);
   }
 

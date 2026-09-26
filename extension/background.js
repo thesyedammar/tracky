@@ -12,7 +12,15 @@ importScripts("shared.js"); // hostMatches / hostDenied — one definition, unit
 
 /** Pages where scripting is impossible or pointless (file:// needs an opt-in Chrome never grants here). */
 const UNSUPPORTED = /^(chrome|edge|about|devtools|chrome-extension|moz-extension|view-source|file):/i;
-const isPdf = (url) => !!url && /\.pdf(\?|#|$)/i.test(url);
+/** PDF detection cannot rely on the extension alone: plenty of papers live at
+ *  /pdf/1234.5678 with no ".pdf" anywhere. These patterns cover the common shapes;
+ *  anything they miss still gets caught by the second-click offer below. */
+const isPdf = (url) =>
+  !!url &&
+  (/\.pdf(\?|#|$)/i.test(url) ||
+    /\.pdf[/?#]/i.test(url) ||
+    /\/pdf\/[^?#]+/i.test(url) ||
+    /[?&](?:format|type|file|download)=pdf\b/i.test(url));
 const isUnsupported = (url) =>
   !url ||
   UNSUPPORTED.test(url) ||
@@ -142,6 +150,22 @@ async function openPanel(tab) {
     await chrome.action.setTitle({ tabId: tab.id, title: DEFAULT_TITLE });
     await clearBadge(tab.id);
   } catch (err) {
+    // Scripting fails exactly where a page cannot be scripted — Chrome's own PDF
+    // viewer being the common case (and the only one we can do something about).
+    // Offer the reader on the first failure; the second click opens it.
+    if (/^https?:/i.test(tab.url ?? "")) {
+      pdfOffer.add(tab.id);
+      try {
+        await chrome.action.setTitle({
+          tabId: tab.id,
+          title: "Tracky can't read this tab — if it is a PDF, click the icon again to open it in Tracky's reader",
+        });
+      } catch {
+        /* tab gone */
+      }
+      await flash(tab.id, "↗");
+      return;
+    }
     await flash(tab.id, "!");
   }
 }
@@ -150,10 +174,16 @@ async function openPanel(tab) {
 // chrome-extension:// origins, so a plain CORS fetch works — proven live by
 // scripts/ext-smoke.py. Keeping the permission set at activeTab + scripting + storage.
 
+/** Tabs where scripting failed once and we offered the PDF reader (second click opens it). */
+const pdfOffer = new Set();
+
 chrome.action.onClicked.addListener((tab) => {
   // A PDF tab goes to the reader — and the origin permission is requested here,
-  // synchronously, while the click's user gesture is still live.
-  if (tab?.url && isPdf(tab.url)) {
+  // synchronously, while the click's user gesture is still live. The same path
+  // serves the second click on a tab where scripting failed (an extensionless PDF).
+  const wantsReader = !!tab?.url && (isPdf(tab.url) || pdfOffer.has(tab.id));
+  if (wantsReader) {
+    pdfOffer.delete(tab.id);
     if (/^https?:/i.test(tab.url)) {
       let origin = null;
       try {
@@ -258,9 +288,10 @@ const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
 async function collectFromTabs(currentTabId, budget) {
-  const opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
   const skipped = { off: 0, denied: 0, restricted: 0, empty: 0, current: 0, over: 0 };
+  const opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
   if (!opts.crossTab) return { on: false, tabs: [], skipped, skippedNote: "off" };
+  if (budget <= 0) return { on: true, tabs: [], skipped, skippedNote: "no room" }; // nothing to do, read nothing
 
   let tabs = [];
   try {
@@ -270,44 +301,81 @@ async function collectFromTabs(currentTabId, budget) {
   } catch {
     return { on: true, tabs: [], skipped, skippedNote: "no access" };
   }
-  const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / CROSS_MAX_TABS)));
-  const picked = [];
+
+  // Pick the candidates first (cheap, no injection), so the per-tab cap can be
+  // computed from the real number of tabs and the total can never exceed budget.
+  const denied = (url) => {
+    try {
+      return hostDenied(new URL(url).hostname, opts.disabledHosts ?? []); // same matcher as the panel
+    } catch {
+      return false;
+    }
+  };
+  const candidates = [];
   for (const t of tabs) {
     if (t.id == null) continue;
     if (t.id === currentTabId) {
       skipped.current++;
       continue;
     }
-    if (picked.length >= CROSS_MAX_TABS) {
+    if (candidates.length >= CROSS_MAX_TABS) {
       skipped.over++;
       continue;
     }
-    if (isUnsupported(t.url) || isPdf(t.url) || (await disabledFor(t.url))) {
+    if (isUnsupported(t.url) || isPdf(t.url) || denied(t.url)) {
       skipped.denied++;
       continue;
     }
-    try {
-      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: t.id },
-        func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
-        args: [perTab],
-      });
-      const blocks = res?.result?.blocks ?? [];
-      if (!blocks.length) {
-        skipped.empty++;
-        continue;
+    candidates.push(t);
+  }
+  if (!candidates.length) return { on: true, tabs: [], skipped, perTab: 0 };
+
+  const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / candidates.length)));
+  // One storage read, one injection pass, all tabs in parallel — no per-tab serial
+  // round-trips, and a tab whose cap is 0 is simply never touched.
+  const settled = await Promise.all(
+    candidates.map(async (t) => {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
+        const [res] = await chrome.scripting.executeScript({
+          target: { tabId: t.id },
+          func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
+          args: [perTab],
+        });
+        return { tab: t, blocks: res?.result?.blocks ?? [] };
+      } catch {
+        return { tab: t, blocks: null }; // no permission for that origin, or the tab is gone
       }
-      picked.push({ tabId: t.id, title: t.title || t.url, url: t.url, blocks });
-    } catch {
-      skipped.restricted++; // no permission for that origin, or the tab is gone
+    }),
+  );
+
+  const picked = [];
+  let total = 0;
+  for (const { tab, blocks } of settled) {
+    if (blocks === null) {
+      skipped.restricted++;
+      continue;
     }
+    if (!blocks.length) {
+      skipped.empty++;
+      continue;
+    }
+    // Hard ceiling across all tabs — CROSS_TOTAL is a total, never a per-tab cap.
+    const room = Math.min(perTab, CROSS_TOTAL - total, budget - total);
+    if (room <= 0) {
+      skipped.over++;
+      continue;
+    }
+    const kept = blocks.slice(0, room);
+    total += kept.length;
+    picked.push({ tabId: tab.id, title: tab.title || tab.url, url: tab.url, blocks: kept });
   }
   return { on: true, tabs: picked, skipped, perTab };
 }
 
-/** One search over this tab plus the others: local passage ids are untouched, other
- *  tabs' passages continue the same id sequence, so every result maps back exactly. */
+/** One search over this tab plus the others. Local passage ids are untouched; other
+ *  tabs' passages get a namespaced id (`<tabId>:<localId>`) so a merge can never
+ *  collide with the local sequence, and every result maps back to its own tab. */
 async function searchWithTabs({ query, passages, currentTabId }) {
   const local = Array.isArray(passages) ? passages : [];
   const budget = Math.max(0, HELPER_PASSAGES_MAX - local.length);
@@ -321,8 +389,9 @@ async function searchWithTabs({ query, passages, currentTabId }) {
   const merged = [...local];
   for (const t of gathered.tabs) {
     for (const b of t.blocks) {
-      if (merged.length >= HELPER_PASSAGES_MAX || map.size >= budget) break;
-      const id = `p${merged.length}`;
+      if (merged.length >= HELPER_PASSAGES_MAX) break;
+      const id = `${t.tabId}:${b.id}`;
+      if (map.has(id)) continue;
       map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
       merged.push({ id, text: b.text });
     }

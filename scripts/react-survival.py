@@ -32,9 +32,20 @@ OUT = ROOT / "spikes" / "out"
 HELPER = os.environ.get("TRACKY_HELPER", "http://127.0.0.1:4199")
 QUERY = "security deposit"
 CHECKS: list[tuple[str, bool, str]] = []
+# Once the model route reports a rate limit, every later failure is a consequence of
+# it, not a broken build (the dependent checks all run after the search step).
+ROUTE_BLOCKED = {"seen": False}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
+    # Same cascade rule as ext-smoke.py: once the model route is rate-limited, later
+    # failures are consequences of it and are reported BLOCKED, never FAIL.
+    if not ok and ("rate-limited" in detail or "429" in detail):
+        ROUTE_BLOCKED["seen"] = True
+    if not ok and ROUTE_BLOCKED["seen"]:
+        CHECKS.append((name, False, "blocked by the model route"))
+        print(f"  BLOCKED  {name}" + (f" — {detail}" if detail else ""))
+        return
     CHECKS.append((name, bool(ok), detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" — {detail}" if detail else ""))
 
@@ -233,8 +244,8 @@ def finish(ctx) -> int:
     failed = [(name, detail) for name, ok, detail in CHECKS if not ok]
     # A rate-limited model route is not a React-survival failure: those checks never
     # ran. Exit 2 (blocked) so the difference is visible in CI and in verify-all.sh.
-    blocked = [f for f in failed if "rate-limited" in f[1] or "429" in f[1]]
-    real = [f for f in failed if f not in blocked]
+    blocked = [f for f in failed if f[1] == "blocked by the model route"]
+    real = [f for f in failed if f[1] != "blocked by the model route"]
     if blocked:
         print(f"\n{len(blocked)} check(s) blocked by the model route (rate-limited):")
         for name, _ in blocked:

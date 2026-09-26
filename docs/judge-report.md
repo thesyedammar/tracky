@@ -320,3 +320,53 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Delete the stray `@media (prefers-reduced-motion: reduce) { .panel { animation: none; } }` after @keyframes tIn — spec requires ONE block and the separate .panel block gone; unified !important block already covers .panel/.dot.wait + .hit/.wrap/.dot/.jump/.recent-chip/.chip
   - Fix false `The one and only reduced-motion block` comment which is currently untrue while two blocks exist
   - Close storage race: open() runs before async trackyOpts load, so first-open deny check can use empty defaults — gate initial open/ping on opts load or re-check after load
+
+### Phase 13 — PDF mode (reader, contract reuse, lazy canvases) — 7.6/10 🔴
+- 27 Sept 2026, 4:30 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, scripts/pdf-smoke.py
+- correctness **7.4** · craft **8** · robustness **6.8** · performance **8.2** · polish **8.1**
+- top fixes:
+  - Missing detect-a-PDF-tab-and-offer-mode code in artifact and no end-to-end search proof; smoke paints highlight manually instead of driving reused panel highlight/scroll path
+  - Slide-aside is race-prone: observer attached only if tracky-root shadowRoot already exists, watches only style display and hard-codes 392px padding instead of measuring panel
+  - Block builder merges multi-column layouts and mangles word breaks: gap uses only top delta with 1.9x rule, always joins spans with single space and normalizes spaces away in verification
+  - Unsafe and fragile IO: fail() uses innerHTML with error text, fetch(src) has no URL validation or CORS fallback for cross-origin/file PDFs, paint() promises fire-and-forget with retained page objects and no rejection handling
+  - Contract placeholders and dead paths: stats hash/ms/skipped faked as 0, MAX_BLOCK_CHARS clipping unreachable due to 1400-char flush, element points at first span not scrollable block, no password/rotation/mixed-size/very-large-doc handling
+
+### Phase 13 — PDF mode (loop 2 after fixes) — 8.2/10 🟡
+- 27 Sept 2026, 4:34 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **7.9** · craft **8.4** · robustness **7.8** · performance **8.6** · polish **8.9**
+- top fixes:
+  - Detect extensionless PDFs (e.g. /pdf/1706.03762, content-type, blob:) — \.pdf regex misses common papers
+  - Fix paragraph assembly: sort spans visually, correct column-jump direction, true de-hyphenation (drop soft hyphen, not keep trans-former)
+  - Bound memory for large PDFs and handle paint failures — no size cap, unhandled paint() rejections, observer never disconnects
+  - Make stats/stub contracts identical to collect.js (considered units, skippedDetail/pages/rendering, maxBlocks arg)
+  - Harden panel-open detection — style.display + style-only observer misses class toggles and gives up silently after 10s
+
+### Phase 13 — PDF mode (loop 3) — 7.6/10 🔴
+- 27 Sept 2026, 4:41 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **6.5** · craft **8.2** · robustness **7** · performance **8** · polish **8.3**
+- top fixes:
+  - Restore canvas pixel size on repaint: free() zeroes width/height but paint() never restores them, so re-armed pages repaint into a 0x0 canvas
+  - Make pdf-stub.js stats match collect.js/pdf-viewer.js exactly: add skippedDetail (and spans) — stub currently omits them
+  - Fix panel-open sync to honor class/hidden, not only wrap.style.display !== 'none', or class/hidden hides leave body.panel-open stuck
+  - Truly de-hyphenate all line-break hyphens and fix column merging: lowercase-only guard keeps Trans-Former hyphenated, and same-y left/right lines are merged into one visual line before column detection
+  - Harden page loop and thresholds: one buildPage/textLayer failure aborts whole doc, pageWidth heuristic and 0.18/2.5/1.9 constants are fragile, and observer attach gives up after 10s
+
+### Phase 13 — PDF mode (loop 4) — 8.1/10 🟡
+- 27 Sept 2026, 4:44 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **7.4** · craft **8.7** · robustness **7.6** · performance **8.2** · polish **8.6**
+- top fixes:
+  - real stats omits `rendering` while stub has `rendering:true` — not byte-for-byte same keys; add `rendering:false` to real collector
+  - only buildPage is try/caught; blocksFromPage throw still aborts whole document — wrap per-page collect and count pageErrors
+  - de-hyphenation uses /^[A-Za-z]/ so accented/Unicode words (caf\u00e9- + x) miss spec's any-letter-case; use /^\p{L}/u
+  - paint/free race: free can zero canvas mid-render and prune reflow is unbounded; guard in-flight paint and harden top/left parsing (empty style.top collapses to 0)
+  - trustworthy-column fallback reverts to top-sorted runs which interleaves true two-column tail pages, and --panel-w goes stale when w<=100
+
+### Phase 14 — cross-tab search (opt-in) — 7.6/10 🔴
+- 27 Sept 2026, 4:45 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **7.5** · craft **8.5** · robustness **7** · performance **7** · polish **8**
+- top fixes:
+  - Early-exit when budget is 0: perTab forces to 1 and injects/collects up to 6 tabs then discards everything via map.size>=budget
+  - ID collision risk: merged ids use p+merged.length assuming dense local p0..pN-1, breaks with scoped/filtered non-sequential ids
+  - CROSS_TOTAL misapplied: used as per-tab cap via min(CROSS_TOTAL, budget/6) so total from other tabs can reach budget (~1200) exceeding stated 600 total cap
+  - jumpToOtherTab has no try/catch around send() timeout, unhandled rejection; tracky:run handler not evidenced in provided content.js tail
+  - Serial per-tab disabledFor storage read plus double executeScript; parallelize and pass perTab cap validation against collector maxBlocks support

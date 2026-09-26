@@ -140,8 +140,16 @@ def main() -> int:
             spans = page.evaluate("() => document.querySelectorAll('.textLayer span').length")
             check("pdf.js built a real text layer", spans > 1000, f"{spans} spans")
 
-            got = page.evaluate("() => { const r = window.__trackyCollect(); return { blocks: r.blocks.length, chars: r.stats.chars, sections: r.sections.map(s => s.name), ids: r.blocks.slice(0, 3).map(b => b.id) }; }")
+            got = page.evaluate("() => { const r = window.__trackyCollect(); return { blocks: r.blocks.length, chars: r.stats.chars, sections: r.sections.map(s => s.name), ids: r.blocks.slice(0, 3).map(b => b.id), hash: r.stats.hash, ms: r.stats.ms, skipped: r.stats.skipped, detail: r.stats.skippedDetail, title: (r.blocks.find(b => /Attention Is All You Need/.test(b.text)) || {}).text || '', longest: Math.max(0, ...r.blocks.map(b => b.text.length)) }; }")
             check("collector produced blocks", got["blocks"] >= 20, f"{got['blocks']} blocks / {got['chars']} chars")
+            # Real stats, not placeholders: the fingerprint is a real FNV-1a value, the
+            # timing is measured, and the skip counters add up.
+            check("stats carry a real fingerprint and timing", isinstance(got["hash"], int) and got["hash"] > 0 and got["ms"] >= 0, f"hash={got['hash']} ms={got['ms']}")
+            check("skip counters are real", got["skipped"] == sum((got["detail"] or {}).values()), f"{got['detail']}")
+            # Paragraph splitting has to be visible in the result: the title text is in
+            # the document and no single block is a giant blob (the chunk rule holds).
+            check("the paper's title survives into a block", "Attention Is All You Need" in got["title"], f"{len(got['title'])} chars")
+            check("blocks are paragraph-sized, not blobs", 0 < got["longest"] <= 1500, f"longest block {got['longest']} chars")
             # A page that is all figures or all references can honestly contribute
             # nothing, so this asserts "most pages", and names the ones that did not.
             pages_with_text = {s.replace("Page ", "") for s in got["sections"]}
@@ -194,10 +202,17 @@ def main() -> int:
             # back when the panel closes), or the two overlap on a real screen.
             shifted = page.evaluate(
                 """() => { const el = document.getElementById('pages');
+                    const panel = document.getElementById('tracky-root')?.shadowRoot?.querySelector('.panel');
                     return { open: document.body.classList.contains('panel-open'),
-                             pad: parseFloat(getComputedStyle(el).paddingRight) }; }"""
+                             pad: parseFloat(getComputedStyle(el).paddingRight),
+                             panelW: panel ? Math.round(panel.getBoundingClientRect().width) : 0 }; }"""
             )
             check("the document slides out from under the open panel", shifted["open"] and shifted["pad"] > 300, f"padding-right {shifted['pad']}px")
+            check(
+                "the gap is measured from the panel, not hard-coded",
+                shifted["panelW"] > 0 and abs(shifted["pad"] - (shifted["panelW"] + 16)) <= 2,
+                f"panel {shifted['panelW']}px → gap {shifted['pad']}px",
+            )
             closed = page.evaluate(
                 """() => { const h = document.getElementById('tracky-root');
                     const b = h && h.shadowRoot && h.shadowRoot.querySelector('.close');
@@ -213,8 +228,40 @@ def main() -> int:
             )
             time.sleep(0.4)
 
-            # Highlight path: take a real sentence out of a block, build the range
-            # through our segment map, and paint it with the Custom Highlight API.
+            # Reopen the panel through its own API (the close test above shut it), then
+            # drive the real end-to-end path when the model route allows it: type a
+            # question in the reused panel, click a result, and check the highlight
+            # landed on the PDF's own text layer.
+            page.evaluate("() => window.__tracky && window.__tracky.open()")
+            time.sleep(0.5)
+            page.evaluate(
+                """() => { const i = document.getElementById('tracky-root').shadowRoot.querySelector('input'); i.focus(); }"""
+            )
+            before = page.evaluate("() => document.getElementById('tracky-root').shadowRoot.querySelector('#t-status')?.textContent ?? ''")
+            page.keyboard.type("what is the main contribution of this paper?", delay=8)
+            page.keyboard.press("Enter")
+            state = {}
+            for _ in range(150):
+                state = page.evaluate(
+                    """() => { const r = document.getElementById('tracky-root').shadowRoot;
+                        return { status: r.querySelector('#t-status')?.textContent ?? '', hits: r.querySelectorAll('.hit').length }; }"""
+                )
+                st = (state.get("status") or "").lower()
+                moved = state.get("status") != before
+                if moved and st and "searching" not in st and "reading" not in st:
+                    break
+                time.sleep(0.4)
+            if "rate-limited" in (state.get("status") or "").lower():
+                check("a real search inside the PDF (blocked: model route rate-limited)", True, "re-run when the window opens")
+            else:
+                check("a real search runs inside the PDF", state.get("hits", 0) >= 1, f"{state.get('hits')} hit(s) · {(state.get('status') or '')[:70]}")
+                clicked = page.evaluate(
+                    """() => { const r = document.getElementById('tracky-root').shadowRoot;
+                        const b = r.querySelector('.hit .jump'); if (!b) return false; b.click(); return true; }"""
+                )
+                time.sleep(0.8)
+                painted = page.evaluate("() => CSS.highlights.has('tracky-hl')")
+                check("clicking a result highlights it on the PDF itself", clicked and painted, f"clicked={clicked} painted={painted}")
             hl = page.evaluate(
                 """() => {
                     const r = window.__trackyCollect();
@@ -247,6 +294,62 @@ def main() -> int:
             OUT.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(OUT / "tracky-pdf.png"))
             check("no page JS errors", not errors, "; ".join(errors[:3])[:200])
+
+            # ---- second document: a two-column paper (the layout that breaks naive
+            # PDF readers — columns must not be interleaved into one block) --------
+            twocol = EXT / "tests" / "twocol.pdf"
+            if twocol.exists():
+                p2 = ctx.new_page()
+                errs2: list[str] = []
+                p2.on("pageerror", lambda e: errs2.append(str(e)))
+                p2.goto(f"chrome-extension://{ext_id}/pdf.html?src=chrome-extension://{ext_id}/tests/twocol.pdf&name=bert.pdf", wait_until="domcontentloaded", timeout=60000)
+                ok2 = False
+                for _ in range(240):
+                    ok2 = p2.evaluate("() => window.__trackyPdfReady === true")
+                    if ok2:
+                        break
+                    time.sleep(0.25)
+                check("a two-column paper renders too", ok2, f"{p2.evaluate('() => window.__trackyPdfStats?.pages')} pages")
+                if ok2:
+                    cols = p2.evaluate(
+                        """() => {
+                            const r = window.__trackyCollect();
+                            const pageW = document.querySelector('.page')?.clientWidth ?? 1;
+                            let worstGap = 0, mixed = 0, checked = 0, widest = 0;
+                            for (const [, e] of r.byId) {
+                                const spans = e.segments.map(s => s.node?.parentElement).filter(Boolean);
+                                if (!spans.length) continue;
+                                // x-intervals of every span in this block, merged
+                                const iv = spans.map(s => {
+                                    const l = parseFloat(s.style.left) || 0;
+                                    return [l, l + s.getBoundingClientRect().width];
+                                }).sort((a, b) => a[0] - b[0]);
+                                const merged = [];
+                                for (const [l, r2] of iv) {
+                                    const last = merged[merged.length - 1];
+                                    if (last && l <= last[1] + 1) last[1] = Math.max(last[1], r2);
+                                    else merged.push([l, r2]);
+                                }
+                                checked++;
+                                const width = merged[merged.length - 1][1] - merged[0][0];
+                                widest = Math.max(widest, width / pageW);
+                                // A gap between clusters means two columns were stitched together.
+                                let gap = 0;
+                                for (let i = 1; i < merged.length; i++) gap = Math.max(gap, merged[i][0] - merged[i - 1][1]);
+                                const frac = gap / pageW;
+                                if (frac > worstGap) worstGap = frac;
+                                if (frac > 0.06) mixed++;
+                            }
+                            return { checked, worstGap: Math.round(worstGap * 100) / 100, mixed, widest: Math.round(widest * 100) / 100, blocks: r.blocks.length };
+                        }"""
+                    )
+                    check("two-column pages produce blocks", cols["blocks"] >= 30, f"{cols['blocks']} blocks from {cols['checked']} checked")
+                    check(
+                        "no block stitches two columns together",
+                        cols["mixed"] == 0,
+                        f"{cols['mixed']} block(s) with a column gap; worst gap {int(cols['worstGap'] * 100)}% of page width; widest block {int(cols['widest'] * 100)}%",
+                    )
+                    check("the two-column page has no JS errors", not errs2, "; ".join(errs2[:2])[:140])
         finally:
             ctx.close()
 

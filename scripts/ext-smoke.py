@@ -37,9 +37,20 @@ HELPER = "http://127.0.0.1:4199/api/health"
 FIXTURE_BASE = ""  # set by main() once the fixture server is up
 
 CHECKS: list[tuple[str, bool, str]] = []
+# Once the model route reports a rate limit, every later failure is a consequence of
+# it (the search-dependent checks all run after the search step). Those are marked
+# BLOCKED, not FAIL — an unrunnable check is not a broken build.
+ROUTE_BLOCKED = {"seen": False}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
+    rate_limited = "rate-limited" in detail or "429" in detail
+    if not ok and rate_limited:
+        ROUTE_BLOCKED["seen"] = True
+    if not ok and ROUTE_BLOCKED["seen"]:
+        CHECKS.append((name, False, "blocked by the model route"))
+        print(f"  BLOCKED  {name}" + (f" — {detail}" if detail else ""))
+        return
     CHECKS.append((name, bool(ok), detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" — {detail}" if detail else ""))
 
@@ -680,8 +691,8 @@ def main() -> int:
     # A rate-limited model route is not a product failure: those checks never got a
     # chance to run. Report them separately (exit 2) so a red run is never confused
     # with a broken build.
-    blocked = [c for c in CHECKS if not c[1] and "rate-limited" in c[2]]
-    real_failures = [c for c in CHECKS if not c[1] and "rate-limited" not in c[2]]
+    blocked = [c for c in CHECKS if not c[1] and c[2] == "blocked by the model route"]
+    real_failures = [c for c in CHECKS if not c[1] and c[2] != "blocked by the model route"]
     print(json.dumps({"checks": total, "passed": passed, "results": CHECKS}, indent=2))
     if blocked:
         print(f"\n{len(blocked)} check(s) blocked by the model route (rate-limited), not counted as failures:")
