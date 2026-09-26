@@ -90,5 +90,10 @@ if (asJson) {
   );
 }
 const failed = rows.filter((r) => !r.ok);
+const allRateLimited = failed.length > 0 && failed.every((r) => /rate-limited|429|quota/i.test(r.detail));
+if (allRateLimited) {
+  console.log(`\nBLOCKED — all ${failed.length} failure(s) are the model route rate-limiting, not product failures.`);
+  process.exit(2);
+}
 console.log(`\n${failed.length ? "FAILURES PRESENT" : "ALL CASES PASSED"} — ${rows.length - failed.length}/${rows.length}`);
 process.exit(failed.length ? 1 : 0);

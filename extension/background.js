@@ -106,6 +106,7 @@ async function openPdf(tab, granted) {
   const url = chrome.runtime.getURL("pdf.html") + `?src=${encodeURIComponent(tab.url)}&name=${encodeURIComponent(name)}`;
   try {
     await chrome.tabs.create({ url, active: true });
+    await chrome.action.setTitle({ tabId: tab.id, title: DEFAULT_TITLE });
     await clearBadge(tab.id);
   } catch {
     await flash(tab.id, "!");
@@ -118,7 +119,7 @@ async function openPanel(tab) {
     try {
       await chrome.action.setTitle({
         tabId: tab.id,
-        title: "Tracky can't read this page — browser pages, PDFs and file:// are off-limits for now",
+        title: "Tracky can't read this page — browser-internal pages and non-PDF file:// pages are off-limits",
       });
     } catch {
       /* tab gone */

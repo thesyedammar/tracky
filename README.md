@@ -10,6 +10,7 @@
 2. Load the extension: `chrome://extensions` → *Developer mode* → *Load unpacked* → pick `extension/`.
 3. Open any long page, press **Alt+K** (or **Ctrl+F**), type what you mean, press Enter.
 4. The best sentence is quoted in the panel; click it and it scrolls to and glows on the page itself.
+5. On a **PDF** tab, click the Tracky icon instead — Tracky's own reader opens (pdf.js, rendered locally) and the same search highlights sentences inside the document, where the browser's Ctrl+F gives up on anything but exact letters.
 
 ## Why it is different
 
@@ -33,6 +34,7 @@ The trick that makes "never" real: the model is only allowed to **pick** from se
 | Unit tests | **100/100** (`node --test server/test/*.test.mjs`) |
 | Extension smoke checks | **46/46** on the fixture **and** on Wikipedia |
 | React survival (real React 18 app) | **9/9** — 0 nodes added/removed inside the app's root |
+| PDF mode (15-page paper) | 15 pages rendered in **4.0 s** · 2,490 text spans → 38 passages · **16/16** checks · highlight paints on the PDF's own text |
 | Key-leak audit | tree + zip + all 10 commits → **0 leaks** |
 | Independent judge (Muse Spark 1.3) | every phase accepted at **8.6–9.1 / 10** (`docs/judge-report.md`) |
 
@@ -64,7 +66,11 @@ page → collect.js   readable blocks + exact char offsets (≤600 blocks, ≤40
 
 - **The helper must be running.** Without it the panel says exactly that, with the command to fix it.
 - **The free model route rate-limits.** When it does, Tracky reports the real wait ("about 100 minutes to go") instead of pretending to search.
-- **PDFs and `file://` pages are not supported yet** (PDF mode is Phase 13). Browser-internal pages can never be scripted.
+- **PDFs work now** — click the Tracky icon on a PDF tab and it opens Tracky's own reader
+  (rendered locally with pdf.js, nothing uploaded) where a search highlights the sentence on
+  the page itself. The first open of a long PDF takes a few seconds while it renders.
+- **`file://` pages are not supported** except PDFs, which need Chrome's per-extension
+  "Allow access to file URLs" toggle (the extension tells you when it is off).
 - **Ctrl+F hijack needs one prior Alt+K on that tab.** The extension deliberately holds no `host_permissions`, so its panel can only exist where you opened it.
 - **Very long pages cost more time** — one model request per 80 passages, run in sequence (a 1,000-passage page is ~13 passes).
 - **Scores are model opinions**, which is why they are shown as percentages and gated rather than trusted.

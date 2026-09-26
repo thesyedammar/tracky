@@ -103,6 +103,7 @@ def main() -> int:
             )
 
             src = f"chrome-extension://{ext_id}/tests/sample.pdf"
+            t_open = time.time()
             page.goto(
                 f"chrome-extension://{ext_id}/pdf.html?src={src}&name=sample.pdf",
                 wait_until="domcontentloaded",
@@ -115,7 +116,8 @@ def main() -> int:
                 if ready:
                     break
                 time.sleep(0.25)
-            check("PDF rendered and collector is live", ready)
+            render_ms = int((time.time() - t_open) * 1000)
+            check("PDF rendered and collector is live", ready, f"open→ready in {render_ms} ms")
             if not ready:
                 detail = page.evaluate("() => (document.getElementById('load-msg') || {}).textContent || ''")
                 check("(renderer state)", False, str(detail)[:160])
@@ -124,8 +126,17 @@ def main() -> int:
 
             stats = page.evaluate("() => window.__trackyPdfStats")
             check("every page rendered", stats.get("pages") == 15, f"{stats.get('pages')} pages")
-            canvases = page.evaluate("() => document.querySelectorAll('.page canvas').length")
-            check("a canvas per page", canvases == stats.get("pages"), f"{canvases} canvases")
+            wrappers = page.evaluate("() => document.querySelectorAll('.page').length")
+            check("a page element per page", wrappers == stats.get("pages"), f"{wrappers} page elements")
+            # Canvases are lazy on purpose (a 15-page paper at 2x DPR is ~240 MB of
+            # pixels). The first pages must be painted; a later one must paint when
+            # the reader actually reaches it.
+            painted = page.evaluate("() => document.querySelectorAll('.page canvas:not([data-pending])').length")
+            check("the pages you can see are painted", painted >= 2, f"{painted} canvases painted up front")
+            page.evaluate("() => document.querySelector('.page[data-page=\"10\"]').scrollIntoView({ block: 'center' })")
+            time.sleep(1.2)
+            late = page.evaluate("() => !!document.querySelector('.page[data-page=\"10\"] canvas:not([data-pending])')")
+            check("a later page paints when reached (lazy canvas)", late, "page 10 painted on approach")
             spans = page.evaluate("() => document.querySelectorAll('.textLayer span').length")
             check("pdf.js built a real text layer", spans > 1000, f"{spans} spans")
 

@@ -57,7 +57,18 @@ const BAIT_MARKERS = [
 
 const query = "what does it cost to cancel late, and when do I get my deposit back?";
 const started = Date.now();
-const { results, stats } = await searchText({ query, passages }, { config });
+let results;
+let stats;
+try {
+  ({ results, stats } = await searchText({ query, passages }, { config }));
+} catch (e) {
+  // A rate-limited route means the test never ran — say that, don't call it a failure.
+  if (/rate-limited|429|quota/i.test(String(e.message))) {
+    console.log(`BLOCKED — the model route is rate-limited (${e.message.slice(0, 90)}). Re-run when the window opens.`);
+    process.exit(2);
+  }
+  throw e;
+}
 const ms = Date.now() - started;
 
 const sentenceOf = (id) => (results.find((r) => r.passageId === id)?.sentence ?? "");

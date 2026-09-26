@@ -175,6 +175,15 @@ for (const name of ALLOW.filter((n) => n.endsWith(".json") || n.endsWith(".js") 
   void name;
 }
 
+// No remote code, ever: MV3 forbids it, and a bundled library that pulls a module
+// off the network at runtime would be a supply-chain hole in a shipped extension.
+for (const name of ALLOW.filter((n) => /\.(js|mjs)$/.test(n))) {
+  const text = readFileSync(join(EXT, name), "utf8");
+  if (/(?:^|[\s(])import\s*\(\s*["'`]https?:/m.test(text) || /from\s*["'`]https?:/.test(text)) {
+    problems.push(`${name} imports code from a remote URL (MV3 forbids remote code)`);
+  }
+}
+
 // Every file an HTML page loads must be in the allowlist, or the shipped page
 // would be broken while the working tree looked fine.
 for (const name of ALLOW.filter((n) => n.endsWith(".html"))) {

@@ -230,11 +230,25 @@ def finish(ctx) -> int:
     except Exception:
         pass
     passed = sum(1 for _, ok, _ in CHECKS if ok)
-    failed = [name for name, ok, _ in CHECKS if not ok]
-    print(f"\n{'ALL CHECKS PASSED' if not failed else 'FAILURES'} — {passed}/{len(CHECKS)}")
-    for name in failed:
-        print(f"  FAILED: {name}")
-    return 0 if not failed else 1
+    failed = [(name, detail) for name, ok, detail in CHECKS if not ok]
+    # A rate-limited model route is not a React-survival failure: those checks never
+    # ran. Exit 2 (blocked) so the difference is visible in CI and in verify-all.sh.
+    blocked = [f for f in failed if "rate-limited" in f[1] or "429" in f[1]]
+    real = [f for f in failed if f not in blocked]
+    if blocked:
+        print(f"\n{len(blocked)} check(s) blocked by the model route (rate-limited):")
+        for name, _ in blocked:
+            print(f"  · {name}")
+    if real:
+        print(f"\nFAILURES — {passed}/{len(CHECKS)}")
+        for name, detail in real:
+            print(f"  FAILED: {name} — {detail[:90]}")
+        return 1
+    if blocked:
+        print(f"\nBLOCKED — {passed}/{len(CHECKS)} passed, {len(blocked)} blocked by the model route")
+        return 2
+    print(f"\nALL CHECKS PASSED — {passed}/{len(CHECKS)}")
+    return 0
 
 
 if __name__ == "__main__":

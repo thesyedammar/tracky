@@ -677,9 +677,24 @@ def main() -> int:
 
     passed = sum(1 for _, ok, _ in CHECKS if ok)
     total = len(CHECKS)
+    # A rate-limited model route is not a product failure: those checks never got a
+    # chance to run. Report them separately (exit 2) so a red run is never confused
+    # with a broken build.
+    blocked = [c for c in CHECKS if not c[1] and "rate-limited" in c[2]]
+    real_failures = [c for c in CHECKS if not c[1] and "rate-limited" not in c[2]]
     print(json.dumps({"checks": total, "passed": passed, "results": CHECKS}, indent=2))
-    print(f"\n{'ALL CHECKS PASSED' if passed == total else 'FAILURES PRESENT'} — {passed}/{total}")
-    return 0 if passed == total else 1
+    if blocked:
+        print(f"\n{len(blocked)} check(s) blocked by the model route (rate-limited), not counted as failures:")
+        for name, _, detail in blocked:
+            print(f"  · {name}")
+    if real_failures:
+        print(f"\nFAILURES PRESENT — {passed}/{total} passed, {len(real_failures)} real failure(s)")
+        return 1
+    if blocked:
+        print(f"\nBLOCKED — {passed}/{total} passed, {len(blocked)} blocked by the model route (re-run when the window opens)")
+        return 2
+    print(f"\nALL CHECKS PASSED — {passed}/{total}")
+    return 0
 
 
 if __name__ == "__main__":

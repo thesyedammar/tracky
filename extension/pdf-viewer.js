@@ -44,8 +44,13 @@ function fail(title, message) {
 ui.name.textContent = name;
 ui.name.title = src;
 
-/** Build the page element (canvas + text layer) for one page. */
-async function renderPage(doc, n, scale) {
+/** Build the page element for one page: a placeholder + its text layer.
+ *
+ *  The text layer is what Tracky searches, so it is built for every page up front
+ *  (cheap: strings and spans). The canvas — the expensive part, ~16 MB each at 2×
+ *  device pixels — is rendered lazily as the reader approaches the page, so a long
+ *  PDF opens fast and does not sit on hundreds of megabytes of pixels. */
+async function buildPage(doc, n, scale) {
   const page = await doc.getPage(n);
   const viewport = page.getViewport({ scale });
 
@@ -61,6 +66,7 @@ async function renderPage(doc, n, scale) {
   canvas.height = Math.floor(viewport.height * ratio);
   canvas.style.width = `${Math.floor(viewport.width)}px`;
   canvas.style.height = `${Math.floor(viewport.height)}px`;
+  canvas.dataset.pending = "1";
   wrap.appendChild(canvas);
 
   const textLayerDiv = document.createElement("div");
@@ -69,16 +75,47 @@ async function renderPage(doc, n, scale) {
   wrap.appendChild(textLayerDiv);
   el("pages").appendChild(wrap);
 
-  await page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined }).promise;
-
   const textLayer = new pdfjsLib.TextLayer({
     textContentSource: page.streamTextContent(),
     container: textLayerDiv,
     viewport,
   });
   await textLayer.render();
-  page.cleanup();
-  return wrap;
+
+  const paint = async () => {
+    if (canvas.dataset.pending !== "1") return;
+    delete canvas.dataset.pending;
+    await page.render({
+      canvasContext: canvas.getContext("2d", { alpha: false }),
+      viewport,
+      transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined,
+    }).promise;
+    page.cleanup();
+  };
+  return { wrap, paint };
+}
+
+/** Render canvases only as they come near the viewport (and the first two always,
+ *  so the document is never blank where the reader is looking). */
+function lazyPaint(pages) {
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const wrap = e.target;
+        const n = Number(wrap.dataset.page);
+        const entry = pages.get(n);
+        if (entry) entry.paint();
+        io.unobserve(wrap);
+      }
+    },
+    { rootMargin: "150% 0px" },
+  );
+  for (const [n, entry] of pages) {
+    if (n <= 2) entry.paint();
+    else io.observe(entry.wrap);
+  }
+  return io;
 }
 
 /** Group a page's text-layer spans into paragraph-ish blocks with exact offsets.
@@ -186,14 +223,18 @@ async function main() {
   const seen = new Set();
   const sections = [];
   const blocks = [];
+  const pages = new Map();
   let chars = 0;
+  let considered = 0;
 
   for (let n = 1; n <= doc.numPages; n++) {
-    const wrap = await renderPage(doc, n, scale);
+    const entry = await buildPage(doc, n, scale);
+    pages.set(n, entry);
     ui.msg.textContent = `page ${n} of ${doc.numPages}`;
     ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
+    considered += entry.wrap.querySelectorAll(".textLayer span").length;
     if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
-      const pageBlocks = blocksFromPage(wrap, n, registry, seen, sections);
+      const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections);
       for (const b of pageBlocks) {
         if (blocks.length >= MAX_BLOCKS || chars >= MAX_CHARS) break;
         blocks.push(b);
@@ -205,7 +246,7 @@ async function main() {
   }
 
   const stats = {
-    considered: blocks.length,
+    considered, // text-layer spans the collector looked at
     skipped: 0,
     blocks: blocks.length,
     chars,
@@ -218,6 +259,7 @@ async function main() {
   window.__trackyCollect = function collect() {
     return { blocks, stats, byId: registry, sections };
   };
+  lazyPaint(pages);
 
   ui.meta.textContent = `${doc.numPages} page${doc.numPages === 1 ? "" : "s"} · ${blocks.length} passages`;
   ui.load.classList.add("gone");
