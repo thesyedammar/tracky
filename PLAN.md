@@ -186,21 +186,40 @@ Done when: a real PDF searched + highlighted where native Ctrl+F gives up.
 model route (rate-limited at the time of writing) — one live search on this PDF completes it.
 
 ### Phase 14 — Cross-tab search [stretch]
-- [ ] 14.1 Permission model
-- [ ] 14.2 On-demand collection from open tabs
-- [ ] 14.3 Results grouped by tab + jump
-- [ ] 14.4 Guardrails for restricted pages
+- [x] 14.1 Permission model — opt-in in the options page; turning it on requests exactly
+      the origins open right now (from the click gesture), never `<all_urls>`
+- [x] 14.2 On-demand collection from open tabs — background gathers collect.js + blocks
+      only (no panel, no UI), merged into the SAME search request so ranking is global;
+      local passage ids stay put and other tabs continue the sequence
+- [x] 14.3 Results grouped by tab + jump — its own section, each quote labelled with the
+      tab's title and host; clicking one brings that tab forward and runs the question
+      there; the panel's "Other tabs" toggle appears only when the option is on
+- [x] 14.4 Guardrails — 6 tabs max, 600 passages from other tabs, never past the helper's
+      1,200 ceiling; denied hosts skipped; Chrome-restricted tabs counted; tabs without a
+      granted origin are not even listed by Chrome, so they cannot be read by accident
+
+Verified: scripts/crosstab-smoke.py — **11/11** in a real Chromium with a real Alt+K
+gesture: off by default, un-granted tabs unreadable, granted tabs collected (2 tabs,
+1 block each on the fixture), budgets honoured (budget 12 → perTab 2), denied host
+skipped, toggle shows and hides with the option.
 
 Done when: one query searches 5 open tabs.
+→ the gathering, budgets and UI are proven; the merged *search* needs the model route
+(rate-limited at the time of writing) — one live run completes this line.
 
 ### Phase 15 — Show it (the interview kit)
-- [ ] 15.1 60–90s demo video/GIF
-- [ ] 15.2 LinkedIn/X write-up
-- [ ] 15.3 3–5 classmates as users + one feedback line
-- [ ] 15.4 Resume bullets + portfolio updates (both)
-- [ ] 15.5 Defense drill — the five deep-dives until solid
+- [ ] 15.1 60–90s demo video/GIF — scripts/demo-record.py written and ready (records a
+      real session: real page, real search, highlight, scope, PDF); runs when the route opens
+- [x] 15.2 LinkedIn/X write-up — docs/launch-post.md (both versions, real numbers, notes)
+- [ ] 15.3 3–5 classmates as users + one feedback line — needs people, not code
+- [x] 15.4 Resume bullets + portfolio updates — docs/resume-bullets.md (two lengths,
+      every number traceable to docs/performance.md)
+- [x] 15.5 Defense drill — the five deep-dives answered in docs/resume-bullets.md,
+      plus a 7-step demo script for the live interview
 
 Done when: a recruiter can click, watch, and read real numbers.
+→ everything that can be written is written; 15.1 needs a model window and 15.3 needs
+the user's classmates.
 
 ## Scope map
 
