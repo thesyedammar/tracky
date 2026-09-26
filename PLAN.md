@@ -78,12 +78,14 @@ Done when: curl works; preview exact; long pages stream progress; Hamdan flips m
 Results (2026-09-27 IST): helper live on 127.0.0.1:4199 — health OK · preview byte-exact (9 passages → 1 chunk · 10,672 B · **0 Jev calls**) · search "hidden charges" → 6 hits, top 0.92 @583 ms · SSE frames open→progress→result verified with curl · counts-only logs proven (page text never reaches the log) · redact same-length so offsets/highlights stay exact (bullets echo back) · 408 slowloris timeout, 499 disconnect path, loopback listen guard. Judge: 8.4 → 7.8 → 8.1 → 8.4 → 8.4 → **9.0/10 accept** (6 loops; ledger in docs/judge-report.md). Tests: **83 specs green**.
 
 ### Phase 5 — Extension skeleton
-- [ ] 5.1 manifest.json (MV3, activeTab + scripting only)
-- [ ] 5.2 background.js — icon click → inject; message relay
-- [ ] 5.3 content.js — panel + ping/pong (isolated from page CSS)
-- [ ] 5.4 Load unpacked + icons 16/32/48/128
+- [x] 5.1 manifest.json (MV3, activeTab + scripting only; `_execute_action` bound to Alt+K so icon + shortcut are one path)
+- [x] 5.2 background.js — icon click → inject; message relay (the only component that talks to the helper)
+- [x] 5.3 content.js — shadow-DOM panel + ping/pong (isolated from page CSS both ways)
+- [x] 5.4 Load unpacked + icons 16/32/48/128 (scripts/make_icons.py)
 
 Done when: panel opens on a real site and shows the helper's reply.
+
+Results (2026-09-27 IST): real-gesture proof — Chrome headed in Xvfb, xdotool presses the actual Alt+K at OS level (this is what grants activeTab; a programmatic inject was correctly refused by Chrome first — probe proved synthetic keys can't trigger accelerators, harness rebuilt to use the real gesture). **15/15 checks green twice: local fixture AND en.wikipedia.org** — panel injected + visible, shows the live helper reply `helper 0.4.0 · jev-1.13-free · ready` (asserted against the helper's own /api/health payload), Esc closes, second gesture reopens, file:// shows the × badge and injects nothing. Screenshots visually verified (dark glass panel, legible over dark + light pages, no clipping). Judge: 8.4 → 8.4 → 8.2 → **8.7/10 accept** (4 loops; ledger in docs/judge-report.md).
 
 ### Phase 6 — Extension reads pages
 - [ ] 6.1 extension/collect.js — readable blocks, skip rules, caps (600 blocks / 400k chars max)

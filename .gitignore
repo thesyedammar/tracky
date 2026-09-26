@@ -10,3 +10,4 @@ coverage/
 .judge/
 artifacts/
 *.zip
+spikes/out/

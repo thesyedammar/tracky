@@ -163,3 +163,43 @@ Every artifact of Tracky passes through an independent judge: **Muse Spark 1.3 (
   - No res error listener and pipeline continues even if SSE open frame failed (res.destroyed) — early-exit to avoid wasted Jev call
   - PAN is uppercase-only and phone_intl lacks digit lookarounds, inconsistent with privacy-first glued-run claim
   - Stream vs non-stream log shapes differ ("(stream)" only on error) making 200s indistinguishable in ops
+
+### Phase 5 — extension skeleton (MV3 panel + live ping/pong) — 8.4/10 🟡
+- 27 Sept 2026, 2:35 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/manifest.json, extension/background.js, extension/content.js, scripts/make_icons.py, scripts/ext-smoke.py, spikes/ext-gesture-probe.py, spikes/fixtures/tos.html
+- correctness **8.7** · craft **8.2** · robustness **7.9** · performance **9** · polish **8.4**
+- top fixes:
+  - Make scripts/ext-smoke.py and probe portable: remove hardcoded /root/.cache/ms-playwright path, discover Chrome via env/playwright, use temp profile, replace fixed sleeps with waits
+  - Validate helper health payload shape in background and content: never render helper undefined · undefined · ready which currently still passes smoke substring checks
+  - Isolate host element itself: inline all:initial and containment on #tracky-root so page CSS cannot hide/clobber it, otherwise shadow-DOM never-leak claim is false
+  - Fix service-worker badge clear: setTimeout may never fire after suspend; use distinct colors for × vs ! and clear reliably
+  - Single-source VERSION and harden dialog: focus trap/return-focus, aria-modal, avoid duplicate ping on second inject where executeScript early-return plus tracky:open both fire
+
+### Phase 5 — extension skeleton (loop 2) — 8.4/10 🟡
+- 27 Sept 2026, 2:38 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/manifest.json, extension/background.js, extension/content.js, scripts/ext-smoke.py, scripts/make_icons.py, spikes/ext-gesture-probe.py
+- correctness **8.3** · craft **8.2** · robustness **8.1** · performance **9** · polish **8.7**
+- top fixes:
+  - Focus restore broken on first open: lastFocus only captured when !visible, so first inject never remembers prior focus — capture activeElement before first input.focus()
+  - Manifest missing host_permissions for http://127.0.0.1:4199 — background fetch relies on implicit permission; declare it or health fails on strict builds
+  - Shiped probe is non-portable dead weight: hardcoded /root/.cache path, persistent profile, headless=False plus --headless=new — remove or port it
+  - Badge flash timer race: setTimeout unconditional clear can wipe later state; store timer id and cancel on successful open
+  - Smoke/shadow brittleness: locator '#tracky-root >> #t-status' does not reliably pierce shadow root, title_hint truncation and remaining fixed sleeps, plus isUnsupported misses file:// — fix query via shadowRoot evaluate and classify non-scriptable URLs as ×
+
+### Phase 5 — extension skeleton (loop 3) — 8.2/10 🟡
+- 27 Sept 2026, 2:40 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/manifest.json, extension/background.js, extension/content.js, scripts/ext-smoke.py, scripts/make_icons.py
+- correctness **7.6** · craft **8.7** · robustness **7.9** · performance **9** · polish **8.6**
+- top fixes:
+  - First injection bypasses open(): bottom ping()+input.focus() never saves lastFocus, so Esc after first open cannot restore focus — route initial show through open() or capture activeElement before focus
+  - Badge flash race remains: clearTimeout happens before awaits, two overlapping flash() can both set timers and leave dangling timeout — use generation token or clear after await
+  - Re-injection double-open: content.js early-return calls open() and background then sends tracky:open causing second open()/ping — skip message if already present or make open idempotent
+  - Smoke gaps: hardcoded jev-1.13-free model string, no file:// -> badge x coverage claimed, second press_shortcut return ignored
+  - send() Promise.race timeout leaves dangling sendMessage promise to reject unhandled — attach catch/noop to loser branch
+
+### Phase 5 — extension skeleton (loop 4) — 8.7/10 🟢
+- 27 Sept 2026, 2:44 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/manifest.json, extension/background.js, extension/content.js, scripts/ext-smoke.py, scripts/make_icons.py
+- correctness **8.7** · craft **9** · robustness **8.2** · performance **8.9** · polish **8.6**
+- top fixes:
+  - Scope Esc handler to panel focus instead of global capture + stopPropagation that hijacks page dialogs/fullscreen
+  - Handle re-inject after worker reload: check for existing #tracky-root and add tabs.onRemoved cleanup; clearBadge never deletes state and leaves badge color
+  - Make smoke crash-safe: wrap live health urlopen in try/fail check and use try/finally for ctx/httpd/profile cleanup; check file:// gesture return
+  - Clear send() timeout on settle to avoid dangling 3s timer per ping
+  - Reset pinging suppression correctly for close/open during in-flight ping and clear badge background color on success
