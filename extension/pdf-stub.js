@@ -14,7 +14,7 @@ window.__trackyCollect = function collectStub(opts = {}) {
   return {
     blocks: [],
     stats: {
-      considered: 0,
+      chunksConsidered: 0,
       skipped: 0,
       skippedDetail: { short: 0, dedupe: 0, capped: 0, cappedPages: 0, pageErrors: 0, considered: 0 },
       blocks: 0,

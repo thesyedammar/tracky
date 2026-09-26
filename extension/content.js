@@ -108,11 +108,11 @@
       .status:has(.dot.bad) { color: #FFD9D9; background: rgba(242, 109, 109, .06); }
       .retry {
         margin-left: auto; flex: none; appearance: none; cursor: pointer;
-        font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #FFD9D9;
-        background: rgba(242, 109, 109, .12); border: 1px solid rgba(242, 109, 109, .35);
+        font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #FFE4E4;
+        background: rgba(242, 109, 109, .2); border: 1px solid rgba(242, 109, 109, .55);
         border-radius: 999px; padding: 4px 10px;
       }
-      .retry:hover { background: rgba(242, 109, 109, .2); }
+      .retry:hover { background: rgba(242, 109, 109, .3); border-color: rgba(242, 109, 109, .75); }
       .retry:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
       .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
@@ -586,9 +586,14 @@
     }
     const skipped = meta?.skipped ?? {};
     const notes = [];
-    if (skipped.restricted) notes.push(`${skipped.restricted} tab(s) Tracky has no permission for`);
-    if (skipped.denied) notes.push(`${skipped.denied} skipped (denied or not a web page)`);
+    if (skipped.blocked) notes.push(`${skipped.blocked} that cannot be scripted (PDFs, chrome:// pages)`);
+    if (skipped.restricted) notes.push(`${skipped.restricted} denied or not permitted`);
     if (skipped.over) notes.push(`${skipped.over} beyond the 6-tab limit`);
+    if (skipped.budget) notes.push(`${skipped.budget} with no room left in this search`);
+    if (skipped.empty) notes.push(`${skipped.empty} with nothing readable`);
+    if (skipped.current) notes.push(`${skipped.current} (this tab)`);
+    if (skipped.hung) notes.push(`${skipped.hung} that stopped answering`);
+    if (meta?.note) notes.push(meta.note);
     out.push(
       `<div class="card-foot" style="padding:8px 12px 2px">Quoted from your other tabs — nothing leaves them until you search.${
         notes.length ? ` Skipped: ${notes.join(", ")}.` : ""

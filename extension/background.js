@@ -288,10 +288,17 @@ const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
 async function collectFromTabs(currentTabId, budget) {
-  const skipped = { off: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, blocked: 0 };
-  if (budget <= 0) return { on: true, tabs: [], skipped, skippedNote: "no room" }; // nothing to read, nothing to ask
-  const opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
-  if (!opts.crossTab) return { on: false, tabs: [], skipped, skippedNote: "off" };
+  // Normalised shape on every return: callers never have to guess which fields exist.
+  const skipped = { blocked: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
+  const done = (patch) => ({ on: true, tabs: [], perTab: 0, skippedNote: "", skipped, ...patch });
+  if (budget <= 0) return done({ skippedNote: "no room" }); // nothing to read, nothing to ask
+  let opts = {};
+  try {
+    opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
+  } catch {
+    return done({ skippedNote: "storage unavailable" }); // fail safe: read nothing
+  }
+  if (!opts.crossTab) return done({ on: false, skippedNote: "off" });
 
   let tabs = [];
   try {
@@ -299,7 +306,7 @@ async function collectFromTabs(currentTabId, budget) {
     // tab is invisible here, so it can never be read by accident.
     tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
   } catch {
-    return { on: true, tabs: [], skipped, skippedNote: "no access" };
+    return done({ skippedNote: "no access" });
   }
 
   // Pick the candidates first (cheap, no injection), so the per-tab cap can be
@@ -332,20 +339,31 @@ async function collectFromTabs(currentTabId, budget) {
     }
     candidates.push(t);
   }
-  if (!candidates.length) return { on: true, tabs: [], skipped, perTab: 0 };
+  if (!candidates.length) return done({});
 
   const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / candidates.length)));
   // One storage read, one injection pass, all tabs in parallel — no per-tab serial
   // round-trips. A tab that never answers (a hung renderer) must not hang the whole
-  // search: each collection races a 4s deadline and is simply counted as restricted.
-  const deadline = (p, ms) =>
-    Promise.race([
-      p,
-      new Promise((resolve) => setTimeout(() => resolve({ tab: null, blocks: null }), ms)),
-    ]);
+  // search: each collection races a 4s deadline, the timer is cleared either way, and
+  // the tab's identity is kept so the skip is reported against the right tab.
+  const deadline = (tab, p, ms) =>
+    new Promise((resolve) => {
+      const t = setTimeout(() => resolve({ tab, blocks: null, hung: true }), ms);
+      p.then(
+        (v) => {
+          clearTimeout(t);
+          resolve(v);
+        },
+        () => {
+          clearTimeout(t);
+          resolve({ tab, blocks: null });
+        },
+      );
+    });
   const settled = await Promise.all(
     candidates.map((t) =>
       deadline(
+        t,
         (async () => {
           try {
             await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
@@ -354,7 +372,8 @@ async function collectFromTabs(currentTabId, budget) {
               func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
               args: [perTab],
             });
-            return { tab: t, blocks: res?.result?.blocks ?? [] };
+            const blocks = Array.isArray(res?.result?.blocks) ? res.result.blocks : null;
+            return { tab: t, blocks };
           } catch {
             return { tab: t, blocks: null }; // no permission for that origin, or the tab is gone
           }
@@ -366,9 +385,10 @@ async function collectFromTabs(currentTabId, budget) {
 
   const picked = [];
   let total = 0;
-  for (const { tab, blocks } of settled) {
+  for (const { tab, blocks, hung } of settled) {
     if (!tab || blocks === null) {
-      skipped.restricted++;
+      if (hung) skipped.hung++;
+      else skipped.restricted++;
       continue;
     }
     if (!blocks.length) {
@@ -385,7 +405,7 @@ async function collectFromTabs(currentTabId, budget) {
     total += kept.length;
     picked.push({ tabId: tab.id, title: tab.title || tab.url, url: tab.url, blocks: kept });
   }
-  return { on: true, tabs: picked, skipped, perTab };
+  return { on: true, tabs: picked, skipped, perTab, skippedNote: "" };
 }
 
 /** One search over this tab plus the others. Local passage ids are untouched; other
@@ -405,6 +425,15 @@ async function searchWithTabs({ query, passages, currentTabId }) {
 
   const map = new Map();
   const merged = [...local];
+  // The helper's frozen contract requires ids shaped like p0, p1, … so cross-tab
+  // passages continue the sequence *after* the highest local id. Deriving it from the
+  // real ids (not from the array length) keeps it collision-free even when the local
+  // set is sparse, which a scoped search makes it.
+  let nextId = 0;
+  for (const p of local) {
+    const m = /^p(\d+)$/.exec(typeof p?.id === "string" ? p.id : "");
+    if (m) nextId = Math.max(nextId, Number(m[1]) + 1);
+  }
   let done = false;
   for (const t of gathered.tabs) {
     if (done) break;
@@ -415,7 +444,7 @@ async function searchWithTabs({ query, passages, currentTabId }) {
       }
       // Only well-formed passages cross the boundary: an id and non-empty text.
       if (typeof b?.id !== "string" || typeof b.text !== "string" || !b.text.length) continue;
-      const id = `${t.tabId}:${b.id}`; // local ids are p0..pN, so the colon can't collide
+      const id = `p${nextId++}`;
       if (map.has(id)) continue;
       map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
       merged.push({ id, text: b.text });

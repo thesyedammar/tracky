@@ -400,3 +400,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - No timeout on collectFromTabs Promise.all — one hung executeScript hangs the whole search
   - No validation of other-tab blocks before merge — b.id/b.text unchecked, undefined text can be sent, colon-collision not excluded if local ids contain colon, outer HELPER_MAX break only breaks inner loop
   - xSearch default opts.crossTab !== false is true when undefined, inverting off-by-default in panel state
+
+### Phase 13 — PDF mode (loop 7) — 8.4/10 🟡
+- 27 Sept 2026, 5:06 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **8.3** · craft **8.8** · robustness **8.2** · performance **8.4** · polish **8.6**
+- top fixes:
+  - Column trust guard count>=2 still fails: two centred lines (title+caption) fake a column and full-width header/footer misorders under (column,top) sort
+  - prune() does getBoundingClientRect over every page on scroll plus unconditional layerRect+clientWidth (2 layouts/page) — use IO for freeing and lazy rect
+  - stats.considered counts chunks while skippedDetail.considered/spans count spans; dedupe key slice(0,160) can collide and hash covers only kept blocks
+  - Background work never ends: attach() retries 3s forever and heartbeat runs 10s forever despite comment saying no reason to do it forever
+  - Run splitting depends on estimated w via gapX/cur.right despite claim only left matters; de-hyphenation drops any trailing - before a letter and fontSize fallback 12 skews line thresholds
+
+### Phase 14 — cross-tab search (loop 3) — 7.9/10 🔴
+- 27 Sept 2026, 5:07 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **7.5** · craft **8** · robustness **7.5** · performance **8.8** · polish **8**
+- top fixes:
+  - Panel crossSection reads skipped.denied which never exists instead of skipped.blocked, so chrome:// and PDF skips are never shown and budget/empty/current are hidden — fix keys and render all buckets honestly
+  - collectFromTabs storage read for trackyOpts is unguarded; any storage throw aborts whole search — wrap with try/catch and fail safe to off/empty
+  - deadline() timer is never cleared and timeout resolves {tab:null,blocks:null}, losing tab identity and conflating hung renderer with deny-list restricted — clear timer and preserve tab
+  - Dead inconsistent contract: skipped.off never incremented, perTab/skippedNote missing on some returns — normalize shape and remove dead weight
+  - Double executeScript per other tab (inject then invoke) with no result-shape validation beyond ??[] — validate res.result.blocks is array and consider single-shot invoke

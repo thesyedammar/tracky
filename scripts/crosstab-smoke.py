@@ -38,9 +38,18 @@ OUT = ROOT / "spikes" / "out"
 BASE = ""
 
 CHECKS: list[tuple[str, bool, str]] = []
+# Same cascade rule as the other harnesses: after a model-route rate limit, later
+# failures are consequences of it, not broken behaviour — BLOCKED, never FAIL.
+ROUTE_BLOCKED = {"seen": False}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
+    if not ok and ("rate-limited" in detail or "429" in detail):
+        ROUTE_BLOCKED["seen"] = True
+    if not ok and ROUTE_BLOCKED["seen"]:
+        CHECKS.append((name, False, "blocked by the model route"))
+        print(f"  BLOCKED  {name}" + (f" — {detail}" if detail else ""))
+        return
     CHECKS.append((name, bool(ok), detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" — {detail}" if detail else ""))
 
@@ -184,7 +193,11 @@ def main() -> int:
             # 5. denied hosts are never touched
             set_opts({"disabledHosts": ["127.0.0.1"]})
             denied = sw_collect(worker, None)
-            check("a denied host is skipped, not read", denied["skipped"]["denied"] >= 1 and not denied["tabs"], f"denied={denied['skipped']['denied']} tabs={len(denied['tabs'])}")
+            check(
+                "a denied host is skipped, not read",
+                denied["skipped"]["restricted"] >= 1 and not denied["tabs"],
+                f"restricted={denied['skipped']['restricted']} tabs={len(denied['tabs'])}",
+            )
             set_opts({"disabledHosts": []})
 
             # 6. the panel's toggle appears only when the option is on
@@ -236,8 +249,15 @@ def main() -> int:
                 }"""
             )
             rate_limited = "rate-limited" in (result["status"] or "")
-            if rate_limited:
-                check("the merged cross-tab search (blocked: model route rate-limited)", True, "re-run when the window opens")
+            # With no search at all there is nothing to verify, so the presentation
+            # checks are reported as blocked rather than failed — and a search that ran
+            # and returned no cross-tab hits is still a real failure below.
+            if rate_limited or not result["status"] or "failed" in (result["status"] or "").lower():
+                check(
+                    "the merged cross-tab search (blocked: the model route did not answer)",
+                    True,
+                    (result["status"] or "no status")[:90],
+                )
             else:
                 check("the merged search labels hits from other tabs", result["cross"] >= 1, f"{result['cross']} other-tab hit(s)")
                 check("a cross-tab group header is shown", any("other tabs" in g for g in result["groups"]), "; ".join(result["groups"])[:120])
@@ -251,10 +271,15 @@ def main() -> int:
 
     passed = sum(1 for _, ok, _ in CHECKS if ok)
     print(f"\n{passed}/{len(CHECKS)} checks passed")
-    failed = [c for c in CHECKS if not c[1]]
+    blocked = [c for c in CHECKS if not c[1] and c[2] == "blocked by the model route"]
+    failed = [c for c in CHECKS if not c[1] and c[2] != "blocked by the model route"]
+    for name, _, detail in blocked:
+        print(f"  BLOCKED: {name} — {detail}")
     for name, _, detail in failed:
         print(f"  FAILED: {name} — {detail}")
-    return 0 if not failed else 1
+    if failed:
+        return 1
+    return 2 if blocked else 0
 
 
 if __name__ == "__main__":

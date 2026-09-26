@@ -152,26 +152,19 @@ function lazyPaint(pages) {
     else io.observe(entry.wrap);
   }
 
-  // Memory bound: canvases well outside the viewport are freed and re-armed.
-  const KEEP_SCREENS = 3;
-  let queued = false;
-  const prune = () => {
-    queued = false;
-    for (const [, entry] of pages) {
-      const r = entry.wrap.getBoundingClientRect();
-      const far = r.bottom < -window.innerHeight * KEEP_SCREENS || r.top > window.innerHeight * (KEEP_SCREENS + 1);
-      if (far && entry.free()) io.observe(entry.wrap);
-    }
-  };
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(prune);
+  // Memory bound: a second observer with a generous margin reports which pages are
+  // far away, so a canvas can be freed without measuring every page on every scroll.
+  const far = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) continue;
+        const entry = pages.get(Number(e.target.dataset.page));
+        if (entry && entry.free()) io.observe(e.target); // re-arm: coming back repaints it
+      }
     },
-    { passive: true },
+    { rootMargin: "300% 0px" },
   );
+  for (const [n, entry] of pages) if (n > 2) far.observe(entry.wrap);
   return io;
 }
 
@@ -199,8 +192,8 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   // Geometry. style.left/top is the text layer's own coordinate system and is what
   // pdf.js always sets, so it is read first; the rect is consulted only when a style
   // is missing (one forced layout instead of one per span on thousand-span pages).
-  // Run widths are estimated from the font size — only the column decision needs to
-  // be exact, and that comes from style.left, never from a width.
+  // Widths are estimated from the font size: run splitting uses that estimate to spot
+  // a wide gap, while the column decision itself comes from style.left and is exact.
   const layerRect = div.getBoundingClientRect();
   const num = (v) => {
     const n = parseFloat(v);
@@ -249,28 +242,60 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   for (const ln of runs) ln.items.sort((a, b) => a.left - b.left);
   const lines = runs;
 
-  // 2. column detection by clustering the line starts: real columns show up as
-  //    clusters of x positions (a two-column paper has two). Each line is assigned
-  //    the cluster its start falls into, so ordering by (cluster, top) reads one
-  //    column top-to-bottom, then the next — and a right→left transition between
-  //    bands can never be mistaken for a continuation.
-  const startsSorted = lines.map((ln) => ln.items[0].left).sort((a, b) => a - b);
-  const bounds = []; // cluster boundaries: the first x of each new cluster
-  for (const x of startsSorted) {
-    if (!bounds.length || x - bounds[bounds.length - 1] > pageWidth * 0.12) bounds.push(x);
-  }
+  // 2. Reading order in bands. A full-width line (a title, a table, a footnote rule)
+  //    closes the band above it and stands alone; the rest are grouped into bands and
+  //    ordered inside each band by column cluster (x-clusters of the line starts), so
+  //    a two-column body reads left column then right, while a centred heading keeps
+  //    the place it has on the page. A column order is only trusted when every
+  //    cluster in that band really holds several lines (an indented list or a single
+  //    centred line is not a column).
+  const isFullWidth = (ln) => {
+    const first = ln.items[0];
+    const last = ln.items[ln.items.length - 1];
+    return last.left + last.w - first.left > pageWidth * 0.8;
+  };
+  const units = [];
+  let band = null;
   for (const ln of lines) {
-    let col = 0;
-    for (let i = 0; i < bounds.length; i++) if (ln.items[0].left >= bounds[i] - 1) col = i;
-    ln.column = col;
+    // `lines` is already sorted top-down from the run pass.
+    if (isFullWidth(ln)) {
+      if (band) {
+        units.push(band);
+        band = null;
+      }
+      units.push({ lines: [ln], full: true });
+    } else {
+      if (!band) {
+        band = { lines: [] };
+        units.push(band);
+      }
+      band.lines.push(ln);
+    }
   }
-  const ordered = lines.slice().sort((a, b) => (a.column ?? 0) - (b.column ?? 0) || a.top - b.top);
-  // Guard against a false split (a centred heading, an indented list): only trust a
-  // column order when every cluster really holds several lines.
-  const colCounts = new Map();
-  for (const ln of ordered) colCounts.set(ln.column ?? 0, (colCounts.get(ln.column ?? 0) ?? 0) + 1);
-  const trustworthy = colCounts.size > 1 && [...colCounts.values()].every((count) => count >= 2);
-  const finalLines = trustworthy ? ordered : lines;
+  const finalLines = [];
+  for (const u of units) {
+    const starts = u.lines.map((ln) => ln.items[0].left).sort((a, b) => a - b);
+    const bounds = []; // cluster boundaries: the first x of each new cluster
+    for (const x of starts) {
+      if (!bounds.length || x - bounds[bounds.length - 1] > pageWidth * 0.12) bounds.push(x);
+    }
+    const counts = new Map();
+    for (const ln of u.lines) {
+      let col = 0;
+      for (let i = 0; i < bounds.length; i++) if (ln.items[0].left >= bounds[i] - 1) col = i;
+      ln.column = col;
+      counts.set(col, (counts.get(col) ?? 0) + 1);
+    }
+    const trusted = counts.size > 1 && [...counts.values()].every((count) => count >= 2);
+    const ordered = trusted ? u.lines.slice().sort((a, b) => a.column - b.column || a.top - b.top) : u.lines;
+    let prevCol = null;
+    for (const ln of ordered) {
+      ln.colChanged = trusted && prevCol !== null && ln.column !== prevCol;
+      prevCol = ln.column;
+      ln.hardBreak = !!u.full; // a full-width line breaks the block on both sides
+      finalLines.push(ln);
+    }
+  }
   const out = [];
   let text = "";
   let segments = [];
@@ -280,7 +305,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   const flush = () => {
     const trimmed = text.trim();
     if (trimmed.length >= MIN_BLOCK_CHARS) {
-      const key = trimmed.replace(/\s+/g, " ").toLowerCase().slice(0, 160);
+      const key = trimmed.replace(/\s+/g, " ").toLowerCase(); // full text: no truncation collisions
       if (!seen.has(key)) {
         seen.add(key);
         const id = `p${registry.size}`;
@@ -308,9 +333,8 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
 
   for (const ln of finalLines) {
     const gap = lastTop === null ? 0 : ln.top - lastTop;
-    // A column change closes the block (only meaningful when the column split was
-    // trusted; otherwise the page's own reading order is kept as-is).
-    const columnChanged = trustworthy && (ln.column ?? 0) !== lastColumn;
+    // A column change (inside a trusted band) or a full-width line closes the block.
+    const columnChanged = ln.colChanged || ln.hardBreak;
     // A paragraph gap or a new column closes the block before this line joins it.
     if (text && (gap > line * 1.9 || columnChanged)) flush();
     for (const it of ln.items) {
@@ -318,7 +342,9 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
       if (tooLong) flush();
       // De-hyphenate a line break: the hyphen goes away, so the word reads whole
       // ("trans-" + "former" → "transformer", "café-" + "teria" → "caféteria").
-      // \p{L} covers accented and non-Latin letters, not just A–Z.
+      // \p{L} covers accented and non-Latin letters, not just A–Z. A genuine hyphen at
+      // a line break is indistinguishable from a split word in a PDF text layer, so a
+      // word like "well-" + "known" becomes "wellknown" — a known, accepted trade-off.
       const prevEndsHyphen = text.endsWith("-") && /^\p{L}/u.test(it.data);
       let start;
       if (!text.length) {
@@ -336,7 +362,9 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
       text += it.data;
     }
     lastTop = ln.top;
-    lastColumn = ln.column ?? 0;
+    // A full-width line also closes the block *after* itself, so a title or a table
+    // never swallows the paragraph that follows it.
+    if (ln.hardBreak) flush();
   }
   flush();
   return out;
@@ -431,14 +459,14 @@ async function main() {
   }
 
   const stats = {
-    considered: skipped.short + skipped.dedupe + skipped.capped + blocks.length, // chunks considered
+    chunksConsidered: skipped.short + skipped.dedupe + skipped.capped + blocks.length, // block-sized chunks
     skipped: skipped.short + skipped.dedupe + skipped.capped,
     skippedDetail: skipped,
     blocks: blocks.length, // document totals; collect() reports what it actually returned
     chars,
     totalBlocks: blocks.length,
     totalChars: chars,
-    hash, // over the whole document, so the panel's cache sees one identity per document
+    hash, // over the kept blocks of the whole document, so the cache sees one identity per document
     hashScope: "document",
     ms: Math.round(performance.now() - t0),
     pages: doc.numPages,
@@ -506,12 +534,12 @@ async function main() {
       return;
     }
     if (tries++ < 40) setTimeout(attach, 250); // content.js may still be loading
-    else setTimeout(attach, 3000); // …and if it is very slow, keep checking anyway
+    else if (tries <= 80) setTimeout(attach, 3000); // ~2 minutes of patience, then stop
   };
   attach();
   // A cheap safety net with a backoff: two seconds while the panel may still be
-  // loading, ten seconds after that, and nothing at all while the tab is hidden.
-  // (One property read each time — but there is no reason to do it forever.)
+  // loading, ten seconds after that, and it stops entirely after ~5 minutes — by then
+  // the panel either exists or is not coming, and the observer covers every change.
   let beats = 0;
   let timer = setInterval(() => {
     if (document.visibilityState === "visible") sync();
@@ -519,6 +547,7 @@ async function main() {
       clearInterval(timer);
       timer = setInterval(() => {
         if (document.visibilityState === "visible") sync();
+        if (++beats >= 50) clearInterval(timer); // hard stop: no endless background work
       }, 10_000);
     }
   }, 2000);
