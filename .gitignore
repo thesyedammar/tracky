@@ -7,5 +7,6 @@ coverage/
 *.log
 .DS_Store
 .cursor/
+.judge/
 artifacts/
 *.zip
