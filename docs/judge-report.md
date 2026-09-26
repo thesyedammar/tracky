@@ -103,3 +103,63 @@ Every artifact of Tracky passes through an independent judge: **Muse Spark 1.3 (
   - askJev exported directly without config/signal validation — missing baseUrl/model/apiKey or bad body yields TypeError, bypassing searchText guards
   - Strictly serial passes — 13-pass sweep pays full serial latency with per-chunk timeout only and no total budget or concurrency option
   - Minor dead weight: focusIndex===null branch unreachable, null-focus entries passed through dedupe only to be filtered at rank
+
+### Phase 4 — helper server (contract, caps, redact, preview, SSE) — 8.4/10 🟡
+- 27 Sept 2026, 2:07 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **7.9** · craft **8.7** · robustness **7.8** · performance **9** · polish **8.8**
+- top fixes:
+  - Implement spec 499 client-disconnect path: map AbortError to 499/log, guard SSE res.write after close, don't emit 500 on abort
+  - Fix redact US-phone leak: only (XXX) XXX-XXXX is masked, bare 415-555-1234 / 415.555.1234 / 415 555 1234 leak to Jev; broaden and add tests
+  - SSE early failures bypass events: validation/413 on ?stream=1 returns JSON after no open frame; send open first then error event or document contract
+  - 413 declared-length fast path never destroys/drains req and loopback check lives only in CLI main, not createHelperServer; enforce on listen
+  - Preview uses input.passages.length and double JSON.stringify for bytes; use prepared length and single serialization
+
+### Phase 4 — helper server (loop 2) — 7.8/10 🔴
+- 27 Sept 2026, 2:11 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **7.5** · craft **8** · robustness **7** · performance **8.5** · polish **8**
+- top fixes:
+  - Guard all SSE writes: onProgress res.write is unguarded and violates spec; check destroyed/headers and try/catch progress/result/error writes
+  - Fix phone_us leading-paren: \b\(? fails before '(' leaving '(' unmasked; use lookbehind or (^|\D) capture so (415) form fully masked
+  - Fix preview stats inconsistency: log uses prepared.length but stats uses input.passages.length; use prepared.length and reuse single serialization for bytes+response
+  - Fix 499 path to attempt no response: currently calls res.end() even when destroyed/headers unsent which can send empty 200; destroy instead and skip end if destroyed
+  - Add missing stream-error observability and harden readBody: log SSE error path like non-stream, avoid removeAllListeners side-effects, handle req error after destroy
+
+### Phase 4 — helper server (loop 3) — 8.1/10 🟡
+- 27 Sept 2026, 2:14 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **8** · craft **8.6** · robustness **7.7** · performance **9** · polish **8.3**
+- top fixes:
+  - SSE error path has no res.destroyed guard and open-frame write has no try/catch, contradicting every-write-guarded claim
+  - Early client disconnect during readBody hangs: no req/res close handling before AbortController is created
+  - phone_us misses separator-less 4155551234 and is blocked after ( e.g. ((415)...) due to (?<![\w(]), leaving PII unmasked
+  - sendJson/writeHead touch socket without destroyed guard; will throw on raced disconnect
+  - reject413 leaves end listener attached, pauses instead of draining, and req.destroy only on finish which never fires if client already gone
+
+### Phase 4 — helper server (loop 4) — 8.4/10 🟡
+- 27 Sept 2026, 2:20 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **8.4** · craft **8.9** · robustness **8.1** · performance **9** · polish **8.7**
+- top fixes:
+  - Result-path res.end() is only destroyed-checked, not try/catch — raced disconnect can still throw, breaking EVERY-write-guarded claim
+  - No read timeout in readBody — trickling client can hold handler forever (slowloris DoS)
+  - Early-413 res.once(finish)->destroy never fires if res already destroyed, leaving req paused; close listener handling asymmetric between early vs streaming 413
+  - Redact gaps: ((415) 555-1234 leaves leading '(' unmasked; Rs./.-prefixed 10-digit (e.g. Rs.1234567890) bypasses phone_bare/long_number via (?<![\d.,₹])
+  - Late-abort logs 200 while sendJson no-ops on destroyed socket; unexpected errors go to console.error bypassing injected log, breaking counts-only testability
+
+### Phase 4 — helper server (loop 5) — 8.4/10 🟡
+- 27 Sept 2026, 2:24 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **8.6** · craft **8.7** · robustness **7.9** · performance **9** · polish **8.3**
+- top fixes:
+  - Redact still uses \b / (?<![\w]) so letter-adjacent runs leak (e.g. a(415) 555-1234, abc1234567890, XABCDE1234F) — use digit-lookarounds for privacy-first masking
+  - Unexpected-error log interpolates err.message verbatim which can carry page text/key — sanitize to name/code only to keep counts-only privacy
+  - Startup/listening path uses console.error bypassing injected log, violating ALL-errors-through-log claim — inject log there too
+  - Stream success logs 200 before write/end succeeds, so failed delivery still logs 200 — move log after confirmed flush or log 499 on write failure
+  - Redact header still says conservative/rupees survive while code comment says over-mask even next to ₹ — reconcile docs and confirm Rs.5,000 vs Rs.1234567890 boundary
+
+### Phase 4 — helper server (loop 6) — 9/10 🟢
+- 27 Sept 2026, 2:28 am IST · model `muse-spark-1.3-contributor` · type production-code · files: server/server.mjs, server/redact.mjs, server/test/server.test.mjs, server/test/redact.test.mjs, spikes/curl-search.sh
+- correctness **9** · craft **9.2** · robustness **8.7** · performance **9.1** · polish **9**
+- top fixes:
+  - Stream 499 path relies on sync try/catch around res.write; async EPIPE/flush failure still logs 200 — use write callback/error listener
+  - Non-stream success logs 200 before sendJson, can log delivered 200 that was never flushed — log after write like stream
+  - No res error listener and pipeline continues even if SSE open frame failed (res.destroyed) — early-exit to avoid wasted Jev call
+  - PAN is uppercase-only and phone_intl lacks digit lookarounds, inconsistent with privacy-first glued-run claim
+  - Stream vs non-stream log shapes differ ("(stream)" only on error) making 200s indistinguishable in ops

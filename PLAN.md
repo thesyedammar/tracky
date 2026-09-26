@@ -64,16 +64,18 @@ Done when: fee sentence ranks #1 + huge fixture fully covered. ✓
 Results (2026-09-27 IST): "hidden charges" → 0.92 top ("They are not part of the advertised daily rate.") @815 ms · "what happens if I cancel" → 0.96 · "can I bring a pet" → single 0.67 hit (policy fix: top-3-always had dragged 0.09/0.03 stragglers into display) · 1000-block sweep → 13 passes of 80/40, golds on chunk edges p79/p80/p959/p960 all surface, 7.7 s, 212k/62k tokens. Engine safety cap: 1200 passages (extension collects ≤600 per contract). Judge: 8.5 → 8.8 → 8.2 → **8.9/10 accept** (4 loops; ledger in docs/judge-report.md). Tests: 60 specs green.
 
 ### Phase 4 — Helper server (+ transparency layer)
-- [ ] 4.1 server/server.mjs — 127.0.0.1:4199, POST /api/search, 512KB cap, loopback-only
-- [ ] 4.2 Contract-exact responses; page text never logged (counts only)
-- [ ] 4.3 server/env.mjs — clear missing-key startup error
-- [ ] 4.4 Clean 400/413/502s per contract
-- [ ] 4.5 spikes/curl-search.sh demo
-- [ ] 4.6 Redact mode (strip emails/phones/IDs before sending)
-- [ ] 4.7 Dry-run preview endpoint — exact payload, no Jev call
-- [ ] 4.8 Sweep progress reporting (simplest working mechanism)
+- [x] 4.1 server/server.mjs — 127.0.0.1:4199, POST /api/search, 512KB cap, loopback-only (+ listen-time guard)
+- [x] 4.2 Contract-exact responses; page text never logged (counts only — proven by test)
+- [x] 4.3 server/env.mjs — clear missing-key startup error
+- [x] 4.4 Clean 400/413/502s per contract (+ 408 read timeout, 499 disconnects)
+- [x] 4.5 spikes/curl-search.sh demo — health / preview / search / SSE, all green live
+- [x] 4.6 Redact mode — same-length masking (emails/phones/PAN/digit runs; short money + dates survive)
+- [x] 4.7 Dry-run preview endpoint — exact payload, no Jev call (`Bearer •••`, key never echoed)
+- [x] 4.8 Sweep progress reporting — SSE (`event: open/progress/result/error`) + `?stream=1`
 
 Done when: curl works; preview exact; long pages stream progress; Hamdan flips mock → real URL.
+
+Results (2026-09-27 IST): helper live on 127.0.0.1:4199 — health OK · preview byte-exact (9 passages → 1 chunk · 10,672 B · **0 Jev calls**) · search "hidden charges" → 6 hits, top 0.92 @583 ms · SSE frames open→progress→result verified with curl · counts-only logs proven (page text never reaches the log) · redact same-length so offsets/highlights stay exact (bullets echo back) · 408 slowloris timeout, 499 disconnect path, loopback listen guard. Judge: 8.4 → 7.8 → 8.1 → 8.4 → 8.4 → **9.0/10 accept** (6 loops; ledger in docs/judge-report.md). Tests: **83 specs green**.
 
 ### Phase 5 — Extension skeleton
 - [ ] 5.1 manifest.json (MV3, activeTab + scripting only)
