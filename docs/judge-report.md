@@ -420,3 +420,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - deadline() timer is never cleared and timeout resolves {tab:null,blocks:null}, losing tab identity and conflating hung renderer with deny-list restricted — clear timer and preserve tab
   - Dead inconsistent contract: skipped.off never incremented, perTab/skippedNote missing on some returns — normalize shape and remove dead weight
   - Double executeScript per other tab (inject then invoke) with no result-shape validation beyond ??[] — validate res.result.blocks is array and consider single-shot invoke
+
+### Phase 13 — PDF mode (loop 8) — 8.3/10 🟡
+- 27 Sept 2026, 5:13 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **8.3** · craft **8.4** · robustness **8.6** · performance **7.6** · polish **8.8**
+- top fixes:
+  - Canvas pixel buffers are allocated for every page up front in buildPage, so lazy paint saves CPU but not memory; unpainted far pages can never be freed because free() bails when pending==1 — start at 0x0 and allocate only in paint
+  - Free-after-render race leaks: if far observer fires while rendering==1 it returns false and never retries after render finishes, so a far page stays resident; re-check free on paint completion
+  - isFullWidth and pageWidth depend on estimated w (len*size*0.5) despite comment claiming column decision is exact from style.left; short centred titles miss 0.8 threshold and non-text footnote rules are undetectable
+  - Trusted-cluster test triggers on indented quotes/lists: a long single-column band with 50 body lines + 2 indented lines satisfies every-cluster>=2 and gets reordered by column then top, destroying in-place order
+  - Dead code and duplication: lastColumn never used, 600 hardcoded in stub vs MAX_BLOCKS, no timeout on getPage/TextLayer render so one hung page stalls whole document
+
+### Phase 14 — cross-tab search (loop 4) — 8.2/10 🟡
+- 27 Sept 2026, 5:14 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **7.6** · craft **8.1** · robustness **8** · performance **8.8** · polish **8.3**
+- top fixes:
+  - fix Other-tabs toggle re-search: renderXtabs calls runSearch({force:true}) while retry calls runSearch(q) and scope calls runSearch() — unify signature or toggle will search wrong query/no-op
+  - count blocked/restricted before over-limit: current over check inflates over and hides PDFs/chrome:// and denied hosts beyond 6-tab cut
+  - cap cross-tab text by bytes/chars before merge: count caps passages but one hostile/huge block can blow helper payload, validate/truncate b.text
+  - guard budget type and perTab NaN: budget<=0 misses undefined/NaN, Math.floor(budget/n) then NaN propagates to maxBlocks; validate tabId for jump
+  - remove dead if(map.has(id)) continue and handle non-pN local ids explicitly; ensure hung timeout cannot double-report and timer is always cleared

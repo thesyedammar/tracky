@@ -130,10 +130,21 @@ async function buildPage(doc, n, targetWidth) {
  *  Released pages repaint when the reader comes back (the observer is re-armed). */
 function lazyPaint(pages) {
   const paintSafely = (entry, wrap) => {
-    entry.paint().catch((err) => {
-      wrap.dataset.paintError = String(err?.message ?? err); // visible to tests, never silent
-      io.observe(wrap); // re-arm: the next visit to this page tries again
-    });
+    entry
+      .paint()
+      .then(() => {
+        // A page that drifted far away *while it was rendering* is freed now: free()
+        // refuses to touch a canvas mid-render, so this is the second chance.
+        if (isFar(wrap) && entry.free()) io.observe(wrap);
+      })
+      .catch((err) => {
+        wrap.dataset.paintError = String(err?.message ?? err); // visible to tests, never silent
+        io.observe(wrap); // re-arm: the next visit to this page tries again
+      });
+  };
+  const isFar = (wrap) => {
+    const r = wrap.getBoundingClientRect(); // once per paint, never per scroll
+    return r.bottom < -window.innerHeight * 3 || r.top > window.innerHeight * 4;
   };
   const io = new IntersectionObserver(
     (entries) => {
@@ -241,6 +252,12 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   }
   for (const ln of runs) ln.items.sort((a, b) => a.left - b.left);
   const lines = runs;
+  // One measured read per line (not per span): a full-width test needs the real right
+  // edge, and measuring the last item of each line is enough for it.
+  for (const ln of lines) {
+    const last = ln.items[ln.items.length - 1];
+    ln.right = last.left + (last.span.getBoundingClientRect().width || last.w);
+  }
 
   // 2. Reading order in bands. A full-width line (a title, a table, a footnote rule)
   //    closes the band above it and stands alone; the rest are grouped into bands and
@@ -249,11 +266,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   //    the place it has on the page. A column order is only trusted when every
   //    cluster in that band really holds several lines (an indented list or a single
   //    centred line is not a column).
-  const isFullWidth = (ln) => {
-    const first = ln.items[0];
-    const last = ln.items[ln.items.length - 1];
-    return last.left + last.w - first.left > pageWidth * 0.8;
-  };
+  const isFullWidth = (ln) => ln.right - ln.items[0].left > pageWidth * 0.8;
   const units = [];
   let band = null;
   for (const ln of lines) {
@@ -286,7 +299,10 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
       ln.column = col;
       counts.set(col, (counts.get(col) ?? 0) + 1);
     }
-    const trusted = counts.size > 1 && [...counts.values()].every((count) => count >= 2);
+    // A column order is trusted only when every cluster holds a real share of the
+    // band's lines (a 50/2 split is a paragraph with two indented lines, not columns).
+    const trusted =
+      counts.size > 1 && [...counts.values()].every((count) => count >= Math.max(2, u.lines.length * 0.2));
     const ordered = trusted ? u.lines.slice().sort((a, b) => a.column - b.column || a.top - b.top) : u.lines;
     let prevCol = null;
     for (const ln of ordered) {
@@ -300,7 +316,6 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   let text = "";
   let segments = [];
   let lastTop = null;
-  let lastColumn = 0;
 
   const flush = () => {
     const trimmed = text.trim();
@@ -423,7 +438,11 @@ async function main() {
 
   for (let n = 1; n <= doc.numPages; n++) {
     try {
-      const entry = await buildPage(doc, n, width);
+      // A page that never finishes rendering must not stall the document.
+      const entry = await Promise.race([
+        buildPage(doc, n, width),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`page ${n} timed out`)), 10_000)),
+      ]);
       pages.set(n, entry);
       ui.msg.textContent = `page ${n} of ${doc.numPages}`;
       ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;

@@ -284,6 +284,7 @@ async function runWhy({ query, matches }) {
 
 const CROSS_MAX_TABS = 6;
 const CROSS_TOTAL = 600; // our own cap on how much other tabs may add
+const CROSS_CHARS = 400_000; // and on how many characters they may add (payload ceiling)
 const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
@@ -291,6 +292,7 @@ async function collectFromTabs(currentTabId, budget) {
   // Normalised shape on every return: callers never have to guess which fields exist.
   const skipped = { blocked: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
   const done = (patch) => ({ on: true, tabs: [], perTab: 0, skippedNote: "", skipped, ...patch });
+  budget = Number.isFinite(budget) ? Math.floor(budget) : 0; // a bad budget reads nothing, never NaN
   if (budget <= 0) return done({ skippedNote: "no room" }); // nothing to read, nothing to ask
   let opts = {};
   try {
@@ -325,16 +327,18 @@ async function collectFromTabs(currentTabId, budget) {
       skipped.current++;
       continue;
     }
-    if (candidates.length >= CROSS_MAX_TABS) {
-      skipped.over++;
-      continue;
-    }
+    // Everything we would never touch is counted first, so the 6-tab cut only ever
+    // hides tabs we could actually have read.
     if (isUnsupported(t.url) || isPdf(t.url)) {
       skipped.blocked++; // chrome://, the web store, PDFs — never scriptable
       continue;
     }
     if (denied(t.url)) {
       skipped.restricted++; // the user said no to this host
+      continue;
+    }
+    if (candidates.length >= CROSS_MAX_TABS) {
+      skipped.over++;
       continue;
     }
     candidates.push(t);
@@ -428,26 +432,36 @@ async function searchWithTabs({ query, passages, currentTabId }) {
   // The helper's frozen contract requires ids shaped like p0, p1, … so cross-tab
   // passages continue the sequence *after* the highest local id. Deriving it from the
   // real ids (not from the array length) keeps it collision-free even when the local
-  // set is sparse, which a scoped search makes it.
+  // set is sparse, which a scoped search makes it. (Local ids are always pN — the
+  // helper rejects anything else, so there is no other shape to handle.)
   let nextId = 0;
   for (const p of local) {
     const m = /^p(\d+)$/.exec(typeof p?.id === "string" ? p.id : "");
     if (m) nextId = Math.max(nextId, Number(m[1]) + 1);
   }
+  // Payload ceiling as well as a passage ceiling: one enormous page must not push the
+  // request past what the helper accepts, so the text budget is enforced as we merge.
+  let chars = 0;
+  for (const p of local) if (typeof p?.text === "string") chars += p.text.length;
   let done = false;
   for (const t of gathered.tabs) {
     if (done) break;
     for (const b of t.blocks) {
-      if (merged.length >= HELPER_PASSAGES_MAX) {
+      if (merged.length >= HELPER_PASSAGES_MAX || chars >= CROSS_CHARS) {
         done = true;
         break;
       }
       // Only well-formed passages cross the boundary: an id and non-empty text.
       if (typeof b?.id !== "string" || typeof b.text !== "string" || !b.text.length) continue;
+      if (chars + b.text.length > CROSS_CHARS) {
+        skipped.budget++;
+        done = true;
+        break;
+      }
       const id = `p${nextId++}`;
-      if (map.has(id)) continue;
       map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
       merged.push({ id, text: b.text });
+      chars += b.text.length;
     }
   }
 

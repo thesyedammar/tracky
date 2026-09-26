@@ -252,7 +252,7 @@
       b.title = "Ask this question again";
       b.addEventListener("click", () => {
         const q = input.value.trim();
-        if (q) runSearch(q);
+        if (q) runSearch({ query: q });
       });
       statusText.after(b);
     }
@@ -925,7 +925,11 @@
   let pendingSearch = false; // an Enter/scope-click during a search is queued, never dropped
   let pendingOpts = {};
   async function runSearch(o = {}) {
-    const q = input.value.trim();
+    // One signature for every caller: a plain string is treated as the query, an
+    // object may carry { query, force, auto, jump }. The input is the source of truth
+    // when no query is given, so a stale string can never search the wrong text.
+    if (typeof o === "string") o = { query: o };
+    const q = (typeof o.query === "string" && o.query.trim() ? o.query : input.value).trim();
     if (!q) {
       if (!searching) ping(); // never clobber an in-flight search's status
       return;
