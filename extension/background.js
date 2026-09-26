@@ -288,10 +288,10 @@ const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
 async function collectFromTabs(currentTabId, budget) {
-  const skipped = { off: 0, denied: 0, restricted: 0, empty: 0, current: 0, over: 0 };
+  const skipped = { off: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, blocked: 0 };
+  if (budget <= 0) return { on: true, tabs: [], skipped, skippedNote: "no room" }; // nothing to read, nothing to ask
   const opts = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
   if (!opts.crossTab) return { on: false, tabs: [], skipped, skippedNote: "off" };
-  if (budget <= 0) return { on: true, tabs: [], skipped, skippedNote: "no room" }; // nothing to do, read nothing
 
   let tabs = [];
   try {
@@ -322,8 +322,12 @@ async function collectFromTabs(currentTabId, budget) {
       skipped.over++;
       continue;
     }
-    if (isUnsupported(t.url) || isPdf(t.url) || denied(t.url)) {
-      skipped.denied++;
+    if (isUnsupported(t.url) || isPdf(t.url)) {
+      skipped.blocked++; // chrome://, the web store, PDFs — never scriptable
+      continue;
+    }
+    if (denied(t.url)) {
+      skipped.restricted++; // the user said no to this host
       continue;
     }
     candidates.push(t);
@@ -332,27 +336,38 @@ async function collectFromTabs(currentTabId, budget) {
 
   const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / candidates.length)));
   // One storage read, one injection pass, all tabs in parallel — no per-tab serial
-  // round-trips, and a tab whose cap is 0 is simply never touched.
+  // round-trips. A tab that never answers (a hung renderer) must not hang the whole
+  // search: each collection races a 4s deadline and is simply counted as restricted.
+  const deadline = (p, ms) =>
+    Promise.race([
+      p,
+      new Promise((resolve) => setTimeout(() => resolve({ tab: null, blocks: null }), ms)),
+    ]);
   const settled = await Promise.all(
-    candidates.map(async (t) => {
-      try {
-        await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
-        const [res] = await chrome.scripting.executeScript({
-          target: { tabId: t.id },
-          func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
-          args: [perTab],
-        });
-        return { tab: t, blocks: res?.result?.blocks ?? [] };
-      } catch {
-        return { tab: t, blocks: null }; // no permission for that origin, or the tab is gone
-      }
-    }),
+    candidates.map((t) =>
+      deadline(
+        (async () => {
+          try {
+            await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
+            const [res] = await chrome.scripting.executeScript({
+              target: { tabId: t.id },
+              func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
+              args: [perTab],
+            });
+            return { tab: t, blocks: res?.result?.blocks ?? [] };
+          } catch {
+            return { tab: t, blocks: null }; // no permission for that origin, or the tab is gone
+          }
+        })(),
+        4000,
+      ),
+    ),
   );
 
   const picked = [];
   let total = 0;
   for (const { tab, blocks } of settled) {
-    if (blocks === null) {
+    if (!tab || blocks === null) {
       skipped.restricted++;
       continue;
     }
@@ -363,7 +378,7 @@ async function collectFromTabs(currentTabId, budget) {
     // Hard ceiling across all tabs — CROSS_TOTAL is a total, never a per-tab cap.
     const room = Math.min(perTab, CROSS_TOTAL - total, budget - total);
     if (room <= 0) {
-      skipped.over++;
+      skipped.budget++;
       continue;
     }
     const kept = blocks.slice(0, room);
@@ -382,15 +397,25 @@ async function searchWithTabs({ query, passages, currentTabId }) {
   const gathered = await collectFromTabs(currentTabId, budget);
   if (!gathered.on) return { ...(await runSearch({ query, passages: local })), crossTab: { enabled: false } };
   if (!gathered.tabs.length) {
-    return { ...(await runSearch({ query, passages: local })), crossTab: { enabled: true, tabs: 0, passages: 0, skipped: gathered.skipped } };
+    return {
+      ...(await runSearch({ query, passages: local })),
+      crossTab: { enabled: true, tabs: 0, passages: 0, skipped: gathered.skipped, note: gathered.skippedNote },
+    };
   }
 
   const map = new Map();
   const merged = [...local];
+  let done = false;
   for (const t of gathered.tabs) {
+    if (done) break;
     for (const b of t.blocks) {
-      if (merged.length >= HELPER_PASSAGES_MAX) break;
-      const id = `${t.tabId}:${b.id}`;
+      if (merged.length >= HELPER_PASSAGES_MAX) {
+        done = true;
+        break;
+      }
+      // Only well-formed passages cross the boundary: an id and non-empty text.
+      if (typeof b?.id !== "string" || typeof b.text !== "string" || !b.text.length) continue;
+      const id = `${t.tabId}:${b.id}`; // local ids are p0..pN, so the colon can't collide
       if (map.has(id)) continue;
       map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
       merged.push({ id, text: b.text });

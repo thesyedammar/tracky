@@ -196,31 +196,35 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   );
   if (!spans.length) return [];
 
-  // Geometry: inline style first, then a rect-relative fallback. Both are measured
-  // against the text layer (the same coordinate system as style.left/top) — mixing in
-  // offsetParent coordinates would corrupt the line grouping.
+  // Geometry. style.left/top is the text layer's own coordinate system and is what
+  // pdf.js always sets, so it is read first; the rect is consulted only when a style
+  // is missing (one forced layout instead of one per span on thousand-span pages).
+  // Run widths are estimated from the font size — only the column decision needs to
+  // be exact, and that comes from style.left, never from a width.
   const layerRect = div.getBoundingClientRect();
   const num = (v) => {
     const n = parseFloat(v);
     return Number.isFinite(n) ? n : null;
   };
   const items = spans.map((span) => {
-    const rect = span.getBoundingClientRect();
-    const left = num(span.style.left) ?? rect.left - layerRect.left;
-    const top = num(span.style.top) ?? rect.top - layerRect.top;
+    const sl = num(span.style.left);
+    const st = num(span.style.top);
+    const rect = sl === null || st === null ? span.getBoundingClientRect() : null;
+    const size = num(span.style.fontSize) ?? 12;
     return {
       span,
       node: span.firstChild,
       data: span.firstChild.data,
-      top,
-      left,
-      size: num(span.style.fontSize) ?? 12,
-      w: rect.width || 0,
+      top: st ?? rect.top - layerRect.top,
+      left: sl ?? rect.left - layerRect.left,
+      size,
+      w: span.firstChild.data.length * size * 0.5, // estimate, used for run splitting only
     };
   });
   const sizes = items.map((i) => i.size).sort((a, b) => a - b);
   const line = sizes[Math.floor(sizes.length / 2)] || 12;
-  const pageWidth = Math.max(...items.map((i) => i.left + i.w), 1);
+  const pageWidth = div.clientWidth || Math.max(...items.map((i) => i.left + i.w), 1);
+  skipped.considered += items.length; // the spans this page actually contributed
 
   // 1. group into visual lines (same vertical band), sorted left→right, then split a
   //    band into runs wherever there is a wide horizontal gap — two columns share a
@@ -265,7 +269,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped) {
   // column order when every cluster really holds several lines.
   const colCounts = new Map();
   for (const ln of ordered) colCounts.set(ln.column ?? 0, (colCounts.get(ln.column ?? 0) ?? 0) + 1);
-  const trustworthy = colCounts.size > 1 && [...colCounts.entries()].every(([c, count]) => c === 0 || count >= 2);
+  const trustworthy = colCounts.size > 1 && [...colCounts.values()].every((count) => count >= 2);
   const finalLines = trustworthy ? ordered : lines;
   const out = [];
   let text = "";
@@ -385,10 +389,9 @@ async function main() {
   const sections = [];
   const blocks = [];
   const pages = new Map();
-  const skipped = { short: 0, dedupe: 0, capped: 0, pageErrors: 0 };
+  const skipped = { short: 0, dedupe: 0, capped: 0, cappedPages: 0, pageErrors: 0, considered: 0 };
   const t0 = performance.now();
   let chars = 0;
-  let considered = 0;
 
   for (let n = 1; n <= doc.numPages; n++) {
     try {
@@ -396,7 +399,6 @@ async function main() {
       pages.set(n, entry);
       ui.msg.textContent = `page ${n} of ${doc.numPages}`;
       ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
-      considered += entry.wrap.querySelectorAll(".textLayer span").length;
       if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
         const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections, skipped);
         for (const b of pageBlocks) {
@@ -407,6 +409,8 @@ async function main() {
           blocks.push(b);
           chars += b.text.length;
         }
+      } else {
+        skipped.cappedPages++; // the cap was reached earlier: this page's text is dropped
       }
     } catch (err) {
       // One unreadable page must not cost the whole document: note it and go on.
@@ -430,23 +434,33 @@ async function main() {
     considered: skipped.short + skipped.dedupe + skipped.capped + blocks.length, // chunks considered
     skipped: skipped.short + skipped.dedupe + skipped.capped,
     skippedDetail: skipped,
-    blocks: blocks.length,
+    blocks: blocks.length, // document totals; collect() reports what it actually returned
     chars,
-    hash,
+    totalBlocks: blocks.length,
+    totalChars: chars,
+    hash, // over the whole document, so the panel's cache sees one identity per document
+    hashScope: "document",
     ms: Math.round(performance.now() - t0),
     pages: doc.numPages,
-    spans: considered, // text-layer spans the collector looked at
+    spans: skipped.considered, // text-layer spans the collector actually used
     rendering: false, // the stub says true while pdf.js is still working
   };
   window.__trackyPdfReady = true;
   window.__trackyPdfStats = stats;
   window.__trackyCollect = function collect(opts = {}) {
     const cap = Number.isInteger(opts?.maxBlocks) && opts.maxBlocks > 0 ? Math.min(opts.maxBlocks, MAX_BLOCKS) : MAX_BLOCKS;
+    const returned = cap >= blocks.length ? blocks : blocks.slice(0, cap);
     return {
-      blocks: cap >= blocks.length ? blocks : blocks.slice(0, cap),
+      blocks: returned,
+      // blocks/chars describe the call; totalBlocks/totalChars describe the document.
       // maxBlocks is reported per call (exactly like the stub does), so identical
       // calls produce identical stats from either collector.
-      stats: { ...stats, maxBlocks: cap },
+      stats: {
+        ...stats,
+        blocks: returned.length,
+        chars: returned.reduce((n, b) => n + b.text.length, 0),
+        maxBlocks: cap,
+      },
       byId: registry,
       sections,
     };
@@ -495,7 +509,20 @@ async function main() {
     else setTimeout(attach, 3000); // …and if it is very slow, keep checking anyway
   };
   attach();
-  setInterval(sync, 2000); // cheap safety net — one property read, never gives up
+  // A cheap safety net with a backoff: two seconds while the panel may still be
+  // loading, ten seconds after that, and nothing at all while the tab is hidden.
+  // (One property read each time — but there is no reason to do it forever.)
+  let beats = 0;
+  let timer = setInterval(() => {
+    if (document.visibilityState === "visible") sync();
+    if (++beats === 20) {
+      clearInterval(timer);
+      timer = setInterval(() => {
+        if (document.visibilityState === "visible") sync();
+      }, 10_000);
+    }
+  }, 2000);
+  window.addEventListener("resize", sync, { passive: true });
 }
 
 main().catch((e) => fail("Something went wrong opening this PDF", String(e.message || e)));

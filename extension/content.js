@@ -106,6 +106,14 @@
       /* When the status is a failure, say so with more than a dot: brighter text and
          a tinted strip, so the most important line in the panel cannot be missed. */
       .status:has(.dot.bad) { color: #FFD9D9; background: rgba(242, 109, 109, .06); }
+      .retry {
+        margin-left: auto; flex: none; appearance: none; cursor: pointer;
+        font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #FFD9D9;
+        background: rgba(242, 109, 109, .12); border: 1px solid rgba(242, 109, 109, .35);
+        border-radius: 999px; padding: 4px 10px;
+      }
+      .retry:hover { background: rgba(242, 109, 109, .2); }
+      .retry:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
       .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
       .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
@@ -231,6 +239,23 @@
   const setStatus = (kind, text) => {
     dot.className = `dot ${kind}`;
     statusText.textContent = text;
+    // A persistent failure gets a retry affordance: ask the same question again
+    // without retyping it. (Rate limits pass, networks hiccup — a second try should
+    // never cost the user their query.)
+    const old = $(".retry");
+    if (old) old.remove();
+    if (kind === "bad") {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "retry";
+      b.textContent = "Retry";
+      b.title = "Ask this question again";
+      b.addEventListener("click", () => {
+        const q = input.value.trim();
+        if (q) runSearch(q);
+      });
+      statusText.after(b);
+    }
   };
 
   const send = (msg, ms = 3000) => {
@@ -386,13 +411,13 @@
         if (isDenied()) setStatus("idle", DENY_MSG);
         else if (statusText.textContent === DENY_MSG) ping();
       }
-      xSearch = opts.crossTab !== false; // default on once the option is enabled
+      xSearch = opts.crossTab === true; // off unless the options page turned it on
       renderXtabs();
     });
     chrome.storage?.onChanged?.addListener?.((changes) => {
       if (changes?.trackyOpts?.newValue) {
         opts = { ...opts, ...changes.trackyOpts.newValue };
-        xSearch = opts.crossTab !== false;
+        xSearch = opts.crossTab === true;
         renderXtabs();
       }
     });
@@ -623,7 +648,7 @@
       `<button class="scope-chip${active ? "" : " on"}" data-scope="">All <span class="n">${sections.reduce((a, s) => a + s.count, 0)}</span></button>`,
       ...usable.map(
         (s) =>
-          `<button class="scope-chip${active === s.name ? " on" : ""}" data-scope="${esc(s.name)}" title="Search only this section">${esc(s.name)} <span class="n">${s.count}</span></button>`,
+          `<button class="scope-chip${active === s.name ? " on" : ""}" data-scope="${esc(s.name)}" title="Search only this section: ${esc(s.name)}">${esc(s.name)} <span class="n">${s.count}</span></button>`,
       ),
     ].join("");
   }

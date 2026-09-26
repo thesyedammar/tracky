@@ -7,20 +7,26 @@
 // the shape here is deliberately identical to collect.js (same keys, same stats
 // fields, same maxBlocks option) so nothing downstream can tell the difference.
 window.__trackyPdfReady = false;
-window.__trackyCollect = function collectStub({ maxBlocks = 600 } = {}) {
+window.__trackyCollect = function collectStub(opts = {}) {
+  // Same clamp as the real collector, so identical calls return identical stats.
+  const raw = opts?.maxBlocks;
+  const cap = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 600) : 600;
   return {
     blocks: [],
     stats: {
       considered: 0,
       skipped: 0,
-      skippedDetail: { short: 0, dedupe: 0, capped: 0, pageErrors: 0 },
+      skippedDetail: { short: 0, dedupe: 0, capped: 0, cappedPages: 0, pageErrors: 0, considered: 0 },
       blocks: 0,
       chars: 0,
+      totalBlocks: 0,
+      totalChars: 0,
       hash: 0,
+      hashScope: "document",
       ms: 0,
       pages: 0,
       spans: 0,
-      maxBlocks,
+      maxBlocks: cap,
       rendering: true, // the panel can say "still rendering" instead of "no text"
     },
     byId: new Map(),

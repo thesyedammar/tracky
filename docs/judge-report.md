@@ -380,3 +380,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Failed paint deletes data-pending before render and first-two pages have no observer to retry, leaving a blank page forever; keep pending until success or re-arm observer on error
   - blocksFromPage is in a second try after pages.set and considered counting, not the same per-page try as buildPage; capped path counts only one overflow block and considered already includes failed pages
   - Real stats.maxBlocks is fixed at 600 while stub echoes the caller's maxBlocks, so identical calls report different stats values
+
+### Phase 13 — PDF mode (loop 6) — 7.6/10 🔴
+- 27 Sept 2026, 4:57 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **7** · craft **8** · robustness **8** · performance **7** · polish **8**
+- top fixes:
+  - Column trust guard exempts col 0 (c===0 || count>=2) contradicting every-cluster comment — single centered heading becomes a trusted column; require all clusters >=2
+  - Sliced collect returns cap-limited blocks but full-document stats.blocks/chars/hash, and stub does not clamp invalid maxBlocks like real collector — identical calls diverge and stats.blocks != blocks.length
+  - getBoundingClientRect called for every span even when style.left/top present — O(N) forced layouts on thousand-span papers; only fallback when style missing
+  - Capped accounting lost when cap already reached before page (blocksFromPage skipped) and spans/considered count unfiltered spans vs filtered items — skip counters undercount
+  - Perpetual 2s sync interval + 3s re-attach loop does getComputedStyle/getBoundingClientRect forever; use MutationObserver/resize only with backoff
+
+### Phase 14 — cross-tab search (loop 2) — 8.2/10 🟡
+- 27 Sept 2026, 4:57 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/background.js, extension/content.js, extension/options.js, extension/options.html, scripts/crosstab-smoke.py
+- correctness **8** · craft **8.5** · robustness **7.5** · performance **9** · polish **8**
+- top fixes:
+  - Check budget<=0 before storage read — currently reads trackyOpts first, so not 'without reading anything'
+  - Conflated skipped buckets: isUnsupported/isPdf counted as denied, over used for both too-many-tabs and budget-exhausted, off never used, skippedNote dropped when tabs empty
+  - No timeout on collectFromTabs Promise.all — one hung executeScript hangs the whole search
+  - No validation of other-tab blocks before merge — b.id/b.text unchecked, undefined text can be sent, colon-collision not excluded if local ids contain colon, outer HELPER_MAX break only breaks inner loop
+  - xSearch default opts.crossTab !== false is true when undefined, inverting off-by-default in panel state

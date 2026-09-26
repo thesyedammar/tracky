@@ -140,12 +140,18 @@ def main() -> int:
             spans = page.evaluate("() => document.querySelectorAll('.textLayer span').length")
             check("pdf.js built a real text layer", spans > 1000, f"{spans} spans")
 
-            got = page.evaluate("() => { const r = window.__trackyCollect(); return { blocks: r.blocks.length, chars: r.stats.chars, sections: r.sections.map(s => s.name), ids: r.blocks.slice(0, 3).map(b => b.id), hash: r.stats.hash, ms: r.stats.ms, skipped: r.stats.skipped, detail: r.stats.skippedDetail, title: (r.blocks.find(b => /Attention Is All You Need/.test(b.text)) || {}).text || '', longest: Math.max(0, ...r.blocks.map(b => b.text.length)) }; }")
+            got = page.evaluate("() => { const r = window.__trackyCollect(); return { blocks: r.blocks.length, chars: r.stats.chars, sections: r.sections.map(s => s.name), ids: r.blocks.slice(0, 3).map(b => b.id), hash: r.stats.hash, ms: r.stats.ms, skipped: r.stats.skipped, detail: r.stats.skippedDetail, spans: r.stats.spans, title: (r.blocks.find(b => b.text.includes('Attention Is All You Need')) || {}).text || '', longest: Math.max(...r.blocks.map(b => b.text.length), 0) }; }")
             check("collector produced blocks", got["blocks"] >= 20, f"{got['blocks']} blocks / {got['chars']} chars")
             # Real stats, not placeholders: the fingerprint is a real FNV-1a value, the
             # timing is measured, and the skip counters add up.
             check("stats carry a real fingerprint and timing", isinstance(got["hash"], int) and got["hash"] > 0 and got["ms"] >= 0, f"hash={got['hash']} ms={got['ms']}")
-            check("skip counters are real", got["skipped"] == sum((got["detail"] or {}).values()), f"{got['detail']}")
+            detail = got["detail"] or {}
+            skips = detail.get("short", 0) + detail.get("dedupe", 0) + detail.get("capped", 0)
+            check(
+                "skip counters are real",
+                got["skipped"] == skips and detail.get("considered", 0) == got["spans"],
+                f"skipped {got['skipped']} == {skips} · considered {detail.get('considered')} == spans {got['spans']}",
+            )
             # Paragraph splitting has to be visible in the result: the title text is in
             # the document and no single block is a giant blob (the chunk rule holds).
             check("the paper's title survives into a block", "Attention Is All You Need" in got["title"], f"{len(got['title'])} chars")
