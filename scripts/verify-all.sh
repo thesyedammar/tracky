@@ -54,7 +54,7 @@ run "unit tests"            0 node --test server/test/*.test.mjs
 run "key-leak audit"        0 node scripts/key-leak-check.mjs
 run "packaging"             0 node scripts/package-extension.mjs
 run "helper health"         0 bash -c 'curl -sf http://127.0.0.1:4199/api/health | head -c 200'
-run "pdf mode (28 checks)"  0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-smoke.py
+run "pdf mode (29 checks)"  0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-smoke.py
 run "extension smoke (fixture)" 0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
 run "extension smoke (wikipedia)" 0 env TRACKY_SMOKE_URL="https://en.wikipedia.org/wiki/Lease" TRACKY_SMOKE_QUERY="security deposit" xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
 run "react survival"        0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/react-survival.py

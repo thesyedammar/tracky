@@ -68,8 +68,10 @@ async function buildPage(doc, n, targetWidth) {
 
   const canvas = document.createElement("canvas");
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.floor(viewport.width * ratio);
-  canvas.height = Math.floor(viewport.height * ratio);
+  // The pixel buffer is allocated in paint(), not here: a 300-page document would
+  // otherwise reserve hundreds of megabytes for pages nobody has scrolled to yet.
+  canvas.width = 0;
+  canvas.height = 0;
   canvas.style.width = `${Math.floor(viewport.width)}px`;
   canvas.style.height = `${Math.floor(viewport.height)}px`;
   canvas.dataset.pending = "1";

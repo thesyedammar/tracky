@@ -301,6 +301,24 @@ def main() -> int:
             page.screenshot(path=str(OUT / "tracky-pdf.png"))
             check("no page JS errors", not errors, "; ".join(errors[:3])[:200])
 
+            # The lazy-memory claim, measured: only pages near the reader may hold a
+            # pixel buffer — a 15-page document must not allocate 15 canvases.
+            mem = page.evaluate(
+                """() => {
+                    const cs = [...document.querySelectorAll('canvas')];
+                    let allocated = 0, total = 0;
+                    for (const c of cs) {
+                        if (c.width > 0 && c.height > 0) { allocated++; total += c.width * c.height; }
+                    }
+                    return { canvases: cs.length, allocated, mb: Math.round((total * 4) / 1048576) };
+                }"""
+            )
+            check(
+                "only pages near the reader hold pixel buffers",
+                mem["allocated"] <= 4,
+                f"{mem['allocated']} of {mem['canvases']} canvases allocated (~{mem['mb']} MB)",
+            )
+
             # ---- second document: a two-column paper (the layout that breaks naive
             # PDF readers — columns must not be interleaved into one block) --------
             twocol = EXT / "tests" / "twocol.pdf"
