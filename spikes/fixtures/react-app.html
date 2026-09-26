@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tracky React survival fixture</title>
+<style>
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 760px; margin: 48px auto; padding: 0 20px; color: #1c2430; }
+  h1 { font-size: 24px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #c9d2e0; background: #f4f7fb; cursor: pointer; }
+  button:hover { background: #e8eef7; }
+  #proof { color: #5a6472; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script>
+    // A real React 18 app: createRoot + useState + reconciliation. The point of this
+    // fixture is that Tracky reads and highlights WITHOUT mutating the app's DOM —
+    // React must be able to re-render at any moment without fighting the extension.
+    const { createElement: h, useState } = React;
+    function App() {
+      const [clicks, setClicks] = useState(0);
+      return h("main", null,
+        h("h1", null, "Car rental terms — React fixture"),
+        h("p", null, "The security deposit is refunded within five business days after the vehicle is returned, subject to inspection."),
+        h("p", null, "Cleaning charges of Rs.1,200 apply if the vehicle is returned with excessive dirt, smoke odour or pet hair."),
+        h("p", null, "Hidden charges may apply if the vehicle is returned after the agreed time or outside the agreed city limits."),
+        h("button", { id: "bump", type: "button", onClick: () => setClicks((c) => c + 1) }, "Bump state (" + clicks + ")"),
+        h("p", { id: "proof" }, clicks ? "React re-rendered " + clicks + " time(s) after the extension touched this page." : "React is idle until you press the button."),
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+  </script>
+</body>
+</html>

@@ -58,11 +58,28 @@ Guarantees:
 
 Clients should show `message` for 4xx/5xx, and a "helper not running" state on network failure (fetch throws).
 
+## POST /api/why — why-chips (v1, added Phase 7)
+
+Request: `{ "query": "…", "matches": [{ "passageId": "p0", "sentence": "…" }], "redact": true? }`
+
+- `matches`: 1–8 entries; `passageId` uses the same `p0, p1, …` ids as search; sentences are page text.
+- `redact: true` applies the same same-length masking as search before anything leaves the helper.
+
+Response: `{ "reasons": [{ "passageId": "p0", "reason": "states a price or fee" | null }], "stats": { "ms": 790, "usage": { … } } }`
+
+- The reason is ALWAYS one of the helper's fixed labels (a closed list the client also knows):
+  `states a price or fee · states a rule or requirement · states a deadline or time limit · defines a term ·
+   gives an example · explains a process or steps · lists an exception · warns about a risk or penalty`
+- The model only PICKS a label — it never writes prose. A malformed pick returns `null` for that match
+  (chip dropped, never guessed).
+- Errors match the shapes above (400/413/502).
+
 ## Not part of this contract (client-side)
 
 - Literal ("exact word") matches — computed client-side from the same passages.
 - Answer card composition — the client renders top results; the server stays a pure finder.
 - Highlighting/painting — client-side (extension paints the page; playground paints its preview).
+- Why-chip *display*: the client decides which matches get chips and how they read.
 
 ## Mocks (build the client before the server exists)
 

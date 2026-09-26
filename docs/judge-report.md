@@ -232,3 +232,91 @@ Every artifact of Tracky passes through an independent judge: **Muse Spark 1.3 (
 | 2 | **8.7 🟢** | **accept** | container-fallback cost reordered (measured 4–7 ms/article), results sanitized before render, nested skip-rules in extraction + exact trimmed segment map, harness defaults (100 passages on real sites), honest status semantics (idle dot for zero matches, structured HTTP ≠ helper-down, client-duration fallback) |
 
 Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 20/20 on the fixture AND on Lease — helper saw **107 passages**, matches rendered, first match a real escrow-deposit sentence @1.4 s · screenshot visually verified. Advisories from the accept folded in the same commit (unified sanitizeResults, clipped segment map, collector-throw message, early-exit container test, lowercase-SVG tag guard, explicit `.dot.idle`).
+
+### Phase 7 — panel results + receipts (click-to-jump, highlight, copy) — 8.3/10 🟡
+- 27 Sept 2026, 3:03 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, scripts/ext-smoke.py
+- correctness **8** · craft **8.6** · robustness **7.8** · performance **8.9** · polish **8.4**
+- top fixes:
+  - Keyboard accessibility hijacked: Enter/Space on focused copy button triggers jumpTo instead of copy due to resultsEl keydown + preventDefault; no visible rank despite spec requiring rank/score/sentence/copy
+  - Dishonest success when locate fails: range null or detached block.element still flashes and reports 'showing that sentence'; need isConnected check on block.element and distinct failure status
+  - Stale status revert race: showStatusBriefly timer not cleared on new runSearch, can overwrite reading/searching status with old statsLine
+  - Scroll correction math wrong for tall blocks and inner scrollers: scrollBy(delta) overshoots by (elH-rectH)/2 and uses window.scrollBy only, so inner-container sentences are not centered
+  - rangeFor synthetic-gap fallback collapses to zero-length at next segment start and sanitizeResults allows empty passageId; map gap to inter-segment boundary and filter empty IDs
+
+### Phase 7 — panel results + receipts (loop 2) — 8.1/10 🟡
+- 27 Sept 2026, 3:05 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, scripts/ext-smoke.py
+- correctness **8.1** · craft **7.9** · robustness **8** · performance **8.3** · polish **8.4**
+- top fixes:
+  - Cache collected blocks explicitly in content.js instead of relying on window.__trackyBlocks side-effect from __trackyCollect(); jumpTo otherwise always fails if collector does not set it
+  - Remove dead `rect = range.getBoundingClientRect()` (unused forced layout) and treat `range.collapsed` / zero-height as null so collapsed range uses 'showing the paragraph — that sentence couldn't be marked' instead of claiming success
+  - Clear statusTimer on close() and guard empty-query ping during active search; otherwise a pending briefly-revert can overwrite fresh ping/search progress after reopen
+  - Fix innerScroller() boundary: loop stops at document.body, misses body/html/overlay scrollers; verify window vs container delta in both cases
+  - Extend ext-smoke.py beyond 23 generic checks to assert loop-2 receipts: rank 1..N, Enter/Space on .copy never calls jumpTo, detached/null-range messages, gap mapping non-collapse
+
+### Phase 7 — panel results + receipts (loop 3) — 8.3/10 🟡
+- 27 Sept 2026, 3:08 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/collect.js, scripts/ext-smoke.py
+- correctness **7.8** · craft **9** · robustness **8.3** · performance **9** · polish **8.7**
+- top fixes:
+  - trimmedView rebases start/end but not node offset: pos 0 in a leading-trimmed text node maps to offset 0 instead of trim amount, shifting highlight start; store node base offset and add it in locate
+  - jumpTo still falls back to window.__trackyBlocks.get — reintroduces the side-effect dependency the spec removed; use lastById only and report honest missing-page message otherwise
+  - marked stays true when CSS.highlights.set throws on older engines, then claims 'showing that sentence' with no mark; only set marked after successful set
+  - first search types without focus/select assert and lastFocus can capture host via activeElement retargeting; select input before typing and ignore host when capturing lastFocus
+  - sanitizeResults does not range-check score so Math.round(score*100)% can render >100% or negative; clamp to 0-100
+
+### Phase 7 — panel results + receipts (loop 4) — 9/10 🟢
+- 27 Sept 2026, 3:12 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/collect.js, scripts/ext-smoke.py, spikes/fixtures/tos.html
+- correctness **9.3** · craft **9** · robustness **8.8** · performance **9.1** · polish **9**
+- top fixes:
+  - Cap rendered results and sentence length in renderResults/sanitizeResults so a rogue helper cannot bloat panel DOM
+  - Handle CSP-blocked page <style> for ::highlight: detect adopted failure and fall back to honest unmarked message
+  - Remove or document dead prev!==input guard in open() since shadow retargeting makes activeElement never equal input
+  - Avoid leaving window.__trackyBlocks as mutable global or freeze/document it as debug-only contract
+  - Guard copy fallback against missing document.body and prefer navigator.clipboard path with clearer blocked messaging
+
+### Phase 7 — panel results + trust features (full spec: card, hybrid, chips, scope, export) — 8.6/10 🟢
+- 27 Sept 2026, 3:25 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/collect.js, extension/background.js, server/why.mjs, server/server.mjs, server/test/why.test.mjs, scripts/ext-smoke.py, docs/contract.md
+- correctness **8.4** · craft **8.9** · robustness **8.3** · performance **8.6** · polish **8.8**
+- top fixes:
+  - Add generation token to loadWhy: stale why response can attach old reasons to new p0/p1 ids after a quick re-search; ignore superseded replies
+  - Fix runSearch searching guard dropping input: rapid scope-click + Enter silently ignored; queue latest or disable input while searching
+  - Remove/harden arbitrary caps: literalMatches break at 4 and scope row slice 0,6 hide real sections; document or paginate instead
+  - Fix nested interactive: button.copy inside div[role=button] is invalid a11y; use article/row with separate jump button and copy button
+  - Make panel send() timeout abort background work: currently timeout rejects but fetch to helper keeps burning; wire AbortSignal through
+
+### Phase 9 — feel-pro pass (live search, cache, history, continuity, a11y, options) — 8.3/10 🟡
+- 27 Sept 2026, 3:36 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/background.js, extension/manifest.json, extension/options.html, extension/options.js, scripts/ext-smoke.py, spikes/ctrlf-debug.py
+- correctness **7.9** · craft **9.1** · robustness **8.6** · performance **9** · polish **8.3**
+- top fixes:
+  - Make answer-card receipt chips real <button>s with keyboard access; honor prefers-reduced-motion for the smooth correction scrollBy (use auto) not just CSS pulse/transitions
+  - Include page-signature in lastSearchKey deduplication or clear it on content change — same query after in-place DOM change is currently dropped and can suppress a fresh answer
+  - Show recent-query chips after a single search and include most-recent; current hidden-if-1 + slice(1) contradicts claimed evidence and hides the last question when field is empty
+  - Broaden Esc close beyond activeElement===host check and make deny-list match subdomains/consistent normalization between background and content script
+  - Ensure focus-visible and keyboard reachability for all interactive elements (card chips currently spans with no tabindex) and verify cached path still announces/pushes consistently
+
+### Phase 9 — feel-pro pass (loop 2) — 7.9/10 🔴
+- 27 Sept 2026, 3:39 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/background.js, scripts/ext-smoke.py
+- correctness **6.9** · craft **8.6** · robustness **7.4** · performance **8.7** · polish **8.5**
+- top fixes:
+  - Background disabledFor uses exact host=== comparison, not hostMatches subdomain logic — spec requires hostMatches in injection gate; sub.example.com bypasses block
+  - Dedupe quickKey omits location.href so two different pages with same query+sig can suppress a fresh answer; include href
+  - hostMatches does not lowercase hostname argument, only list entry; normalize both and share one helper between content.js and background.js
+  - Esc gate adds select beyond spec input/textarea/contenteditable without comment; align or document
+  - Duplicated prefers-reduced-motion block for .dot.wait; consolidate
+
+### Phase 9 — feel-pro pass (loop 3) — 7.9/10 🔴
+- 27 Sept 2026, 3:41 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/shared.js, extension/background.js, extension/content.js, scripts/ext-smoke.py
+- correctness **8** · craft **7.5** · robustness **8** · performance **8.5** · polish **7.5**
+- top fixes:
+  - Reduced-motion not actually consolidated: still two @media blocks while comment claims One block — merge .panel animation into the single block
+  - key and quickKey are byte-identical definitions side-by-side with confusing comments — keep one canonical makeKey()
+  - Page signature is only blocks.length:chars and collides on same-size different content — use content hash
+  - hostMatches does not strip leading-dot entries or trailing-dot FQDN, and only SW copy is unit-tested so mirror can drift untested
+  - Stale copy: (never sent to Jev) typo and misleading sync comments need cleanup
+
+### Phase 9 — feel-pro pass (loop 4) — 7.6/10 🔴
+- 27 Sept 2026, 3:44 am IST · model `muse-spark-1.3-contributor` · type production-code · files: extension/content.js, extension/collect.js, extension/shared.js, extension/background.js, scripts/ext-smoke.py
+- correctness **7** · craft **7** · robustness **8** · performance **9** · polish **7**
+- top fixes:
+  - Delete the stray `@media (prefers-reduced-motion: reduce) { .panel { animation: none; } }` after @keyframes tIn — spec requires ONE block and the separate .panel block gone; unified !important block already covers .panel/.dot.wait + .hit/.wrap/.dot/.jump/.recent-chip/.chip
+  - Fix false `The one and only reduced-motion block` comment which is currently untrue while two blocks exist
+  - Close storage race: open() runs before async trackyOpts load, so first-open deny check can use empty defaults — gate initial open/ping on opts load or re-check after load

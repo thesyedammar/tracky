@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tracky — options</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0E1218; color: #DEE5EF; margin: 0; padding: 40px 20px;
+  }
+  main { max-width: 620px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 .dot { color: #F5C453; }
+  .sub { color: #8A94A6; margin: 0 0 28px; }
+  section {
+    background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 14px; padding: 18px 18px 16px; margin-bottom: 16px;
+  }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: #AAB3C2; margin: 0 0 12px; }
+  label.row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; cursor: pointer; }
+  input[type="checkbox"] { width: 16px; height: 16px; accent-color: #F5C453; }
+  textarea {
+    width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical;
+    background: rgba(255, 255, 255, .05); color: #E9EDF5; border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 10px; padding: 9px 11px; font: 13px/1.5 ui-monospace, monospace;
+  }
+  button {
+    appearance: none; border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .05);
+    color: #DEE5EF; font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 9px; cursor: pointer;
+  }
+  button:hover { background: rgba(255, 255, 255, .09); }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
+  .muted { color: #8A94A6; font-size: 12px; }
+  .kv { display: flex; gap: 8px; align-items: baseline; }
+  .kv b { color: #F5C453; font-variant-numeric: tabular-nums; }
+  #helper { display: flex; align-items: center; gap: 9px; }
+  #helper .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
+  #helper .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
+  #helper .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
+  code { background: rgba(255, 255, 255, .07); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, monospace; }
+  .save { color: #3ECF8E; font-size: 12px; opacity: 0; transition: opacity 160ms ease; }
+  .save.on { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="dot">◉</span> Tracky options</h1>
+  <p class="sub">Ctrl+F that finds by meaning — and quotes the exact sentences it found.</p>
+
+  <section>
+    <h2>Helper</h2>
+    <div id="helper"><span class="dot" id="hdot"></span><span id="htext">checking…</span></div>
+    <p class="muted" style="margin:10px 0 0">If it says the helper is down, start it with <code>node server/server.mjs</code>. Page text goes only to this local helper on 127.0.0.1 — it is never uploaded anywhere else, and the helper logs counts, never text.</p>
+  </section>
+
+  <section>
+    <h2>Behaviour</h2>
+    <label class="row"><input type="checkbox" id="hijack"> <span>Ctrl+F (⌘F) opens Tracky instead of the browser's find bar</span></label>
+    <label class="row"><input type="checkbox" id="count"> <span>Count my searches for the local spend meter (a counter, never a log)</span></label>
+    <span class="save" id="saved">saved ✓</span>
+  </section>
+
+  <section>
+    <h2>Sites where Tracky stays off</h2>
+    <textarea id="hosts" spellcheck="false" placeholder="one host per line, e.g.&#10;mail.google.com&#10;bank.example.com"></textarea>
+    <p class="muted" style="margin:10px 0 0">Alt+K on a listed site does nothing but show a small dash on the icon.</p>
+  </section>
+
+  <section>
+    <h2>Today (IST) — spend meter</h2>
+    <div class="kv"><span>searches</span> <b id="s-count">0</b> <span class="muted">·</span> <span>passages sent</span> <b id="s-pass">0</b></div>
+    <p class="muted" style="margin:10px 0 12px">Counts only — no page text, no queries, no history is stored anywhere.</p>
+    <button id="reset" type="button">Reset today's meter</button>
+  </section>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

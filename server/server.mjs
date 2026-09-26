@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./env.mjs";
 import { searchText } from "./search.mjs";
+import { whyFor, validateWhyInput } from "./why.mjs";
 import { validateSearchInput, SearchError, LIMITS } from "./validate.mjs";
 import { preparePassages, buildRequest, BATCH_MAX } from "./jev.mjs";
 import { redactText } from "./redact.mjs";
@@ -271,6 +272,61 @@ export function createHelperServer({
         }
       }
 
+      // Why-chips: one extra Jev pass that only PICKS a reason from our fixed list.
+      if (path === "/api/why" && req.method === "POST") {
+        const raw = await readBody(req, res, BODY_CAP, readTimeoutMs);
+        let body;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          throw new SearchError("Malformed JSON body.", 400);
+        }
+        const input = validateWhyInput(body);
+
+        // Same privacy rule as search: page text is masked before it leaves.
+        let matches = input.matches;
+        let redactNote = "";
+        if (body.redact === true) {
+          const counts = {};
+          matches = matches.map((m) => {
+            const r = redactText(m.sentence);
+            for (const [k, n] of Object.entries(r.counts)) counts[k] = (counts[k] ?? 0) + n;
+            return { id: m.id, sentence: r.text };
+          });
+          const parts = Object.entries(counts).map(([k, n]) => `${k}×${n}`);
+          redactNote = ` · redacted ${parts.length ? parts.join(" ") : "nothing"}`;
+        }
+
+        const controller = new AbortController();
+        res.on("close", () => controller.abort(new Error("client disconnected")));
+        try {
+          const { reasons, stats } = await whyFor({ query: input.query, matches }, { config, fetchImpl, signal: controller.signal });
+          if (res.destroyed) {
+            log(`POST /api/why → 499 cancelled (client disconnected)${redactNote} · ${stats.ms} ms`);
+            return;
+          }
+          sendJson(res, 200, { reasons, stats });
+          log(
+            `POST /api/why → 200 · ${reasons.length} matches · ${reasons.filter((r) => r.reason).length} chips${redactNote} · ${stats.ms} ms · tokens ${stats.usage.input_tokens}/${stats.usage.output_tokens}`,
+          );
+          return;
+        } catch (err) {
+          const status = err instanceof SearchError ? err.status : 500;
+          if (status === 499 || res.destroyed || controller.signal.aborted) {
+            log(`POST /api/why → 499 cancelled (client disconnected)${redactNote}`);
+            if (!res.destroyed) {
+              try {
+                res.end();
+              } catch {
+                /* already gone */
+              }
+            }
+            return;
+          }
+          throw err;
+        }
+      }
+
       return sendJson(res, 404, { message: "Not found." });
     } catch (err) {
       if (res.headersSent) {
@@ -331,7 +387,7 @@ if (isMain) {
   const server = createHelperServer({ config });
   server.listen(port, host, () => {
     console.log(`tracky-helper ${VERSION} · http://${host}:${port}`);
-    console.log(`  POST /api/search · POST /api/preview · GET /api/health`);
+    console.log(`  POST /api/search · POST /api/why · POST /api/preview · GET /api/health`);
     console.log(`  model ${config.model} · key loaded from server/.env (never logged)`);
     console.log(`  caps: body ${BODY_CAP / 1024} KB · ${LIMITS.passagesMax} passages · ${BATCH_MAX}/pass`);
   });

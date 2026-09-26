@@ -108,6 +108,29 @@ test("a failing pass fails the whole search (never partial truth)", async () => 
   );
 });
 
+test("a 429 says how long the quota window is, not 'a moment'", async () => {
+  const withWait = async () => ({
+    ok: false,
+    status: 429,
+    headers: { get: (k) => (k.toLowerCase() === "retry-after" ? "5975" : null) },
+    text: async () => '{"type":"error"}',
+  });
+  await assert.rejects(
+    searchText({ query: "fee", passages: makePassages(1) }, { config, fetchImpl: withWait }),
+    (e) => e instanceof SearchError && e.status === 502 && /rate-limited/.test(e.message) && /100 minutes/.test(e.message),
+  );
+  const noHeader = async () => ({
+    ok: false,
+    status: 429,
+    headers: { get: () => null },
+    text: async () => "nope",
+  });
+  await assert.rejects(
+    searchText({ query: "fee", passages: makePassages(1) }, { config, fetchImpl: noHeader }),
+    (e) => e instanceof SearchError && /rate-limited — try again in a few minutes/.test(e.message),
+  );
+});
+
 // AbortSignal.timeout timers are unref'd in Node — a bare test process would
 // drain the event loop before the abort fires. Hold the loop until it does.
 const hangingFetch = () => (url, init) =>

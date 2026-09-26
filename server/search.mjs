@@ -100,7 +100,20 @@ export async function askJev(body, { config, fetchImpl = fetch, timeoutMs = DEFA
   } catch {
     throw failure("Jev's reply was cut off — try again.");
   }
-  if (!res.ok) throw failure(`Jev answered HTTP ${res.status} — try again in a moment.`);
+  if (!res.ok) {
+    // Say what the upstream actually said. A 429 with retry-after is a quota window,
+    // not a mystery — "try again in a moment" would be a lie the user can't act on.
+    if (res.status === 429) {
+      const wait = Number(res.headers?.get?.("retry-after"));
+      const mins = Number.isFinite(wait) && wait > 0 ? Math.ceil(wait / 60) : 0;
+      throw failure(
+        mins
+          ? `Jev's free route is rate-limited — about ${mins} minute${mins === 1 ? "" : "s"} to go.`
+          : "Jev's free route is rate-limited — try again in a few minutes.",
+      );
+    }
+    throw failure(`Jev answered HTTP ${res.status} — try again in a moment.`);
+  }
   try {
     return { data: JSON.parse(text) };
   } catch {

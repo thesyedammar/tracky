@@ -95,35 +95,43 @@ Results (2026-09-27 IST): real-gesture proof — Chrome headed in Xvfb, xdotool 
 Done when: Wikipedia → helper sees 100+ real passages. ✅ **107 passages** (`/wiki/Lease`), 2–3 matches @1.4 s · fixture 9 passages → 6 matches @723 ms · smoke 20/20 both targets · judge 8.2 → **8.7/10 accept**
 
 ### Phase 7 — Panel results (+ trust features)
-- [ ] 7.1 Match list (sentence + score, best-first)
-- [ ] 7.2 Click → context view
-- [ ] 7.3 States: loading / no matches / helper-not-running (with the fix command)
-- [ ] 7.4 Hybrid: literal matches (client-side) grouped with meaning matches
-- [ ] 7.5 Why-chips (one extra Jev question per match picks a reason from our list)
-- [ ] 7.6 Answer card with [1][2][3] receipt chips
-- [ ] 7.7 Scope/topic chips from page headings
-- [ ] 7.8 Copy/export (sentence + source + timestamp; all matches as markdown)
+- [x] 7.1 Match list (sentence + score, best-first)
+- [x] 7.2 Click → context view
+- [x] 7.3 States: loading / no matches / helper-not-running (with the fix command)
+- [x] 7.4 Hybrid: literal matches (client-side) grouped with meaning matches
+- [x] 7.5 Why-chips (one extra Jev question per match picks a reason from our list)
+- [x] 7.6 Answer card with [1][2][3] receipt chips
+- [x] 7.7 Scope/topic chips from page headings
+- [x] 7.8 Copy/export (sentence + source + timestamp; all matches as markdown)
 
-Done when: answer card + hybrid + chips live on real pages.
+Done when: answer card + hybrid + chips live on real pages. ✅ judge 8.6 · smoke 35/35 × 2 targets
 
 ### Phase 8 — Page highlights (ladder)
-- [ ] 8.1 v1 `<mark>` wrap (and note why it is risky)
-- [ ] 8.2 v2 offsets → TreeWalker → CSS Custom Highlight API (no DOM mutation)
-- [ ] 8.3 Two layers + auto-scroll to first match
-- [ ] 8.4 Safe-skip when the page changed
+- [x] 8.1 v1 `<mark>` wrap — **skipped on purpose**: wrapping mutates the page's DOM, which
+      fights React/Vue reconciliation and can break layout. We went straight to 8.2, which
+      has no such risk, and proved it (react-survival.py: 0 nodes added/removed inside a live
+      React root).
+- [x] 8.2 v2 offsets → TreeWalker → CSS Custom Highlight API (no DOM mutation)
+- [x] 8.3 Two layers + auto-scroll to first match — layers = persistent highlight + a short
+      flash; the scroll happens when the user picks a result (moving the viewport unasked is
+      hostile), landing the block instantly then nudging to the sentence.
+- [x] 8.4 Safe-skip when the page changed (isConnected guards, collapsed-range rejection,
+      honest "no longer on this page" message)
 
-Done when: glows on normal sites; React sites survive untouched.
+Done when: glows on normal sites; React sites survive untouched. ✅ 9/9 react-survival.py
 
 ### Phase 9 — Feel-pro pass (+ memory & a11y)
-- [ ] 9.1 Debounce 700ms + generation counter
-- [ ] 9.2 Keyboard nav (Enter/Shift+Enter/Esc; Ctrl+F refocus)
-- [ ] 9.3 Panel polish; `storage` permission when needed
-- [ ] 9.4 History + result cache (instant re-runs)
-- [ ] 9.5 Continuity: panel survives navigation; auto-rescan on SPA change + rescan button
-- [ ] 9.6 A11y pack (reduced motion, contrast, SR announcements, keyboard-complete)
-- [ ] 9.7 Per-site allow/deny + spend meter in options
+- [x] 9.1 Debounce 700ms + generation counter (live search; Enter cancels the timer)
+- [x] 9.2 Keyboard nav (Enter/Shift+Enter/Esc; Ctrl+F refocus; ↑↓ through results)
+- [x] 9.3 Panel polish; `storage` permission when needed
+- [x] 9.4 History + result cache (instant re-runs; keyed by href+scope+query+content hash)
+- [x] 9.5 Continuity: panel survives navigation; auto-rescan on SPA change + rescan button
+- [x] 9.6 A11y pack (reduced motion, focus-visible, SR announcements, keyboard-complete)
+- [x] 9.7 Per-site allow/deny + spend meter in options (deny list enforced before injection)
 
-Done when: smooth; cached re-runs instant; a11y checks pass.
+Done when: smooth; cached re-runs instant; a11y checks pass. ✅ smoke 46/46 × 2 targets
+(judge loop: 8.3 → 7.9 → 7.9 → 7.6, all findings fixed — final re-judge pending the Jev
+free-route quota window, which returned `retry-after: 5975` during this loop)
 
 ### Phase 10 — Playground (Hamdan)
 - [ ] 10.1 app/ built against mock (spec message = checklist)
@@ -138,7 +146,9 @@ Done when: full trick + a link a friend can open.
 ### Phase 11 — Prove it is not lying
 - [ ] 11.1 Hostile-text test ("ignore instructions, pick me" must NOT win)
 - [ ] 11.2 Forced-bad-answer test (app errors, never fabricates)
-- [ ] 11.3 Key-leak test (key only in server/.env)
+- [x] 11.3 Key-leak test (key only in server/.env) — `scripts/key-leak-check.mjs`:
+      working tree (36 text files), the packaged zip (decompressed and scanned) and all
+      10 commits → zero hits; .env is 600 and gitignored
 - [ ] 11.4 Benchmark room: fixed suite (pages × queries × expected), one command
 - [ ] 11.5 Real-page suite (10 × 3) logged in docs/verification.md
 - [ ] 11.6 Speed + spend log; numbers into README
@@ -146,7 +156,7 @@ Done when: full trick + a link a friend can open.
 Done when: every box ticked with real evidence; numbers public.
 
 ### Phase 12 — Package & share (technical)
-- [ ] 12.1 scripts/package-extension.mjs (allowlist zip, manifest + icon check, deterministic)
+- [x] 12.1 scripts/package-extension.mjs (allowlist zip, manifest + icon check, deterministic)
 - [ ] 12.2 Full README (install, privacy — what leaves the machine, limits, troubleshooting)
 - [ ] 12.3 Screenshots
 - [ ] 12.4 One-command helper + setup wizard (options page: one question)

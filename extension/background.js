@@ -8,6 +8,8 @@
 const HELPER = "http://127.0.0.1:4199";
 const DEFAULT_TITLE = "Tracky — search this page by meaning (Alt+K)";
 
+importScripts("shared.js"); // hostMatches / hostDenied — one definition, unit-tested via the SW
+
 /** Pages where scripting is impossible or pointless (file:// needs an opt-in Chrome never grants here). */
 const UNSUPPORTED = /^(chrome|edge|about|devtools|chrome-extension|moz-extension|view-source|file):/i;
 const isUnsupported = (url) =>
@@ -57,6 +59,18 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   badgeState.delete(tabId);
 });
 
+/** The user's per-site deny list, straight from storage (options page writes it). */
+async function disabledFor(url) {
+  try {
+    const v = await chrome.storage.local.get({ trackyOpts: null });
+    const hosts = v?.trackyOpts?.disabledHosts;
+    if (!Array.isArray(hosts) || !hosts.length) return false;
+    return hostDenied(new URL(url).hostname, hosts); // same matcher as the panel (shared.js)
+  } catch {
+    return false; // storage trouble must never break opening the panel
+  }
+}
+
 async function openPanel(tab) {
   if (!tab || tab.id == null) return;
   if (isUnsupported(tab.url)) {
@@ -71,6 +85,15 @@ async function openPanel(tab) {
     await flash(tab.id, "×");
     return;
   }
+  if (await disabledFor(tab.url)) {
+    try {
+      await chrome.action.setTitle({ tabId: tab.id, title: "Tracky is off for this site — see the options" });
+    } catch {
+      /* tab gone */
+    }
+    await flash(tab.id, "–");
+    return;
+  }
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["collect.js", "content.js"] });
     await chrome.tabs.sendMessage(tab.id, { type: "tracky:open" });
@@ -83,7 +106,7 @@ async function openPanel(tab) {
 
 // No host_permissions on purpose: the helper's origin gate echoes
 // chrome-extension:// origins, so a plain CORS fetch works — proven live by
-// scripts/ext-smoke.py. Keeping the permission set at activeTab + scripting.
+// scripts/ext-smoke.py. Keeping the permission set at activeTab + scripting + storage.
 
 chrome.action.onClicked.addListener((tab) => {
   openPanel(tab);
@@ -129,6 +152,35 @@ async function runSearch({ query, passages }) {
   return res.json(); // { results, stats }
 }
 
+/** Relay a why-chips pass to the helper. Same path as search: page text goes page → here → helper. */
+async function runWhy({ query, matches }) {
+  let res;
+  try {
+    res = await fetch(`${HELPER}/api/why`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, matches }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    const e = new Error("helper unreachable");
+    e.helperDown = true;
+    throw e;
+  }
+  if (!res.ok) {
+    let message = `helper replied ${res.status}`;
+    try {
+      message = (await res.json()).message ?? message;
+    } catch {
+      /* not JSON — keep the status line */
+    }
+    const e = new Error(message);
+    e.helperDown = false;
+    throw e;
+  }
+  return res.json(); // { reasons, stats }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "tracky:health") {
     checkHealth().then(
@@ -141,6 +193,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     runSearch(msg).then(
       (out) => sendResponse({ ok: true, ...out }),
       (err) => sendResponse({ ok: false, error: err?.message ?? "search failed", helperDown: !!err?.helperDown }),
+    );
+    return true; // async reply
+  }
+  if (msg?.type === "tracky:why") {
+    runWhy(msg).then(
+      (out) => sendResponse({ ok: true, ...out }),
+      (err) => sendResponse({ ok: false, error: err?.message ?? "why failed", helperDown: !!err?.helperDown }),
     );
     return true; // async reply
   }

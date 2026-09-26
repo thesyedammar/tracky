@@ -39,7 +39,7 @@
       if (node.nodeType === Node.TEXT_NODE) {
         const data = node.data;
         if (!data) return;
-        segments.push({ node, start: out.length, end: out.length + data.length });
+        segments.push({ node, start: out.length, end: out.length + data.length, base: 0 });
         out += data;
         return;
       }
@@ -57,7 +57,9 @@
     return { text: out, segments };
   }
 
-  /** Trim whitespace while keeping the segment map exact (offsets rebased). */
+  /** Trim whitespace while keeping the segment map exact (offsets rebased, node
+   *  base offsets preserved so a sentence starting inside a partially-trimmed
+   *  text node still maps to the right character). */
   function trimmedView(text, segments) {
     const start = text.length - text.trimStart().length;
     const end = text.trimEnd().length;
@@ -66,7 +68,8 @@
       const a = Math.max(s.start, start);
       const b = Math.min(s.end, end);
       if (b <= a) continue;
-      segs.push({ ...s, start: a - start, end: b - start });
+      const base = (s.base ?? 0) + (a - s.start); // node offset of the first kept char
+      segs.push({ ...s, start: a - start, end: b - start, base });
     }
     return { text: text.slice(start, end), segments: segs };
   }
@@ -92,7 +95,8 @@
   window.__trackyCollect = function collect({ maxBlocks = MAX_BLOCKS, maxChars = MAX_CHARS } = {}) {
     const started = performance.now();
     const accepted = [];
-    const stats = { considered: 0, skipped: 0, blocks: 0, chars: 0, ms: 0 };
+    const stats = { considered: 0, skipped: 0, blocks: 0, chars: 0, hash: 0, ms: 0 };
+    let hash = 2166136261 >>> 0; // FNV-1a seed
 
     const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_ELEMENT, {
       acceptNode(el) {
@@ -124,11 +128,20 @@
     const registry = new Map();
     const blocks = [];
     const seen = new Set();
+    const sections = []; // ordered [{ name, count }] — headings are the section names
+    const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+    let currentSection = null;
     for (const el of accepted) {
       if (blocks.length >= maxBlocks || stats.chars >= maxChars) break;
       const extracted = extractText(el);
       const { text, segments } = trimmedView(extracted.text, extracted.segments);
       const trimmed = text.trim();
+      // A heading opens a new section — set before the length checks so a short
+      // heading still names the section it starts.
+      if (HEADING_TAGS.has((el.tagName || "").toUpperCase())) {
+        currentSection = trimmed.replace(/\s+/g, " ").slice(0, 60) || null;
+        if (currentSection) sections.push({ name: currentSection, count: 0 });
+      }
       if (trimmed.length < MIN_BLOCK_CHARS) {
         stats.skipped++;
         continue;
@@ -151,13 +164,24 @@
       }
       const id = `p${blocks.length}`;
       blocks.push({ id, text: clippedText });
-      registry.set(id, { element: el, text: clippedText, segments: clippedSegs });
+      registry.set(id, { element: el, text: clippedText, segments: clippedSegs, section: currentSection });
+      if (currentSection) {
+        const s = sections.find((x) => x.name === currentSection);
+        if (s) s.count++;
+      }
       stats.chars += clippedText.length;
+      // FNV-1a over every block's text: a cheap content fingerprint so the panel can
+      // tell "same page" from "same size, different content" when keying its cache.
+      for (let i = 0; i < clippedText.length; i++) {
+        hash = (hash ^ clippedText.charCodeAt(i)) >>> 0;
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
     }
 
     stats.blocks = blocks.length;
+    stats.hash = hash;
     stats.ms = Math.round(performance.now() - started);
-    window.__trackyBlocks = registry;
-    return { blocks, stats };
+    window.__trackyBlocks = registry; // handy for debugging; the return value is the contract
+    return { blocks, stats, byId: registry, sections };
   };
 })();

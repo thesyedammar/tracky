@@ -25,6 +25,7 @@ import urllib.request
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -33,6 +34,7 @@ EXT = ROOT / "extension"
 FIXTURES = ROOT / "spikes" / "fixtures"
 OUT = ROOT / "spikes" / "out"
 HELPER = "http://127.0.0.1:4199/api/health"
+FIXTURE_BASE = ""  # set by main() once the fixture server is up
 
 CHECKS: list[tuple[str, bool, str]] = []
 
@@ -135,7 +137,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
     )
     try:
         worker = None
-        for _ in range(50):
+        for _ in range(150):  # cold Chrome under Xvfb can take >5 s to register the worker
             if ctx.service_workers:
                 worker = ctx.service_workers[0]
                 break
@@ -188,6 +190,11 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         query = os.environ.get("TRACKY_SMOKE_QUERY") or "hidden charges"
         real_site = bool(os.environ.get("TRACKY_SMOKE_URL"))
         min_passages = int(os.environ.get("TRACKY_SMOKE_MIN_PASSAGES") or ("100" if real_site else "8"))
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const i = h && h.shadowRoot && h.shadowRoot.querySelector('input');"
+            " if (i) { i.focus(); i.select(); } }"
+        )
         page.keyboard.type(query, delay=12)
         page.keyboard.press("Enter")
         text2 = ""
@@ -215,9 +222,191 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         )
         check("first match quotes a real sentence", len(first_sentence) >= 20, first_sentence[:90])
 
+        # --- Phase 7: answer card, hybrid exact-word group, why-chips ---
+        card = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+            " if (!s) return null; const c = s.querySelector('.card'); if (!c) return null;"
+            " return { title: c.querySelector('.card-title')?.textContent ?? '',"
+            " lines: c.querySelectorAll('.card-line').length,"
+            " chips: c.querySelectorAll('.chip').length,"
+            " foot: c.querySelector('.card-foot')?.textContent ?? '' }; }"
+        )
+        check(
+            "answer card quotes the page with receipt chips",
+            bool(card) and card["lines"] >= 1 and card["chips"] == card["lines"] and "nothing invented" in card["foot"],
+            str(card)[:140],
+        )
+        groups = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+            " if (!s) return null; return { groups: [...s.querySelectorAll('.group')].map((g) => g.textContent),"
+            " exacts: s.querySelectorAll('.hit .tag').length,"
+            " sentences: [...s.querySelectorAll('.hit .sentence')].map((e) => e.textContent) }; }"
+        )
+        sentences = groups["sentences"] if groups else []
+        needle = query.lower()
+        # Hybrid = literal + meaning merged. When the literal sentence is also the best
+        # meaning match it is deduped (by design), so either the Exact-words group shows
+        # or the query's sentence is present exactly once — and never twice.
+        hybrid_ok = bool(groups) and (
+            (any("Exact words" in g for g in groups["groups"]) and groups["exacts"] >= 1)
+            or any(needle in s.lower() for s in sentences)
+        )
+        check(
+            "hybrid: exact-word matches merge with meaning matches (deduped, no doubles)",
+            hybrid_ok and len(sentences) == len(set(sentences)),
+            f"groups={groups['groups'] if groups else None} exacts={groups['exacts'] if groups else None}",
+        )
+        why_text = ""
+        for _ in range(120):  # chips ride a second helper pass — poll up to ~12 s
+            why_text = page.evaluate(
+                "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+                " if (!s) return ''; const w = [...s.querySelectorAll('.hit .why')].find((e) => !e.hidden && e.textContent);"
+                " return w ? w.textContent : ''; }"
+            )
+            if why_text:
+                break
+            time.sleep(0.1)
+        check("why-chips pick a reason from the helper's list", len(why_text) > 6, why_text)
+
+        # --- Phase 7: click results -> page scrolls to + highlights the exact sentence ---
+        scroll_before = page.evaluate("window.scrollY")
+        room = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
+        n_hits = page.evaluate(
+            "() => document.getElementById('tracky-root').shadowRoot.querySelectorAll('.hit').length"
+        )
+        last_hit = 0
+        for i in range(min(2, n_hits)):  # two hits: the first is the leading-whitespace paragraph
+            last_hit = i
+            sentence_i = page.evaluate(
+                "() => document.getElementById('tracky-root').shadowRoot"
+                f".querySelectorAll('.hit .sentence')[{i}].textContent"
+            )
+            page.evaluate(
+                "() => document.getElementById('tracky-root').shadowRoot"
+                f".querySelectorAll('.hit .jump')[{i}].click()"
+            )
+            page.wait_for_timeout(1100)
+            hl_i = page.evaluate(
+                "() => { try { const h = CSS.highlights.get('tracky-hl');"
+                " return h ? [...h].map((r) => r.toString()).join(' | ') : ''; } catch { return ''; } }"
+            )
+            check(
+                f"hit {i + 1}: highlighted text equals the quote exactly",
+                hl_i == sentence_i and len(hl_i) > 20,  # no strip: leading-whitespace bugs must fail
+                hl_i[:110],
+            )
+            inview = page.evaluate(
+                "() => { try { const h = CSS.highlights.get('tracky-hl'); const r = h && [...h][0]; if (!r) return null;"
+                " const b = r.getBoundingClientRect(); return [Math.round(b.top), Math.round(b.bottom), window.innerHeight]; }"
+                " catch { return null; } }"
+            )
+            check(
+                f"hit {i + 1}: sentence is in view after the jump",
+                bool(inview) and inview[0] >= -8 and inview[1] <= inview[2] + 8,
+                str(inview),
+            )
+        scroll_after = page.evaluate("window.scrollY")
+        print(f"  note  page scrolled {scroll_before} -> {scroll_after} (room {room})")
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const c = h && h.shadowRoot && h.shadowRoot.querySelector('.hit .copy'); if (c) c.click(); }"
+        )
+        page.wait_for_timeout(400)
+        text3 = read_status(page)
+        check("copying a quote gives feedback", "copied" in text3 or "copy blocked" in text3, text3)
+        ranks = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " return [...h.shadowRoot.querySelectorAll('.hit .rank')].map((r) => r.textContent); }"
+        )
+        check("results carry 1..N rank numbers", ranks == [str(i + 1) for i in range(len(ranks))] and len(ranks) >= 1, str(ranks))
+        # Enter on the focused copy button must copy — never jump the page
+        scroll_pre = page.evaluate("window.scrollY")
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const c = h.shadowRoot.querySelector('.hit .copy'); if (c) c.focus(); }"
+        )
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+        text4 = read_status(page)
+        scroll_post = page.evaluate("window.scrollY")
+        check(
+            "Enter on the copy button copies instead of jumping",
+            "copied" in text4 and abs(scroll_post - scroll_pre) <= 8,
+            f"{text4!r} scroll {scroll_pre} -> {scroll_post}",
+        )
+
         shot = OUT / "tracky-panel.png"
         page.screenshot(path=str(shot))
         check("screenshot saved", shot.exists(), str(shot))
+
+        # --- honest failure states ---
+        page.evaluate(
+            "() => { try { const h = CSS.highlights.get('tracky-hl'); const r = h && [...h][0]; if (!r) return;"
+            " const node = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;"
+            " const block = node && node.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, figcaption, pre');"
+            " if (block) block.remove(); } catch {} }"
+        )
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            f" const hit = h && h.shadowRoot && h.shadowRoot.querySelectorAll('.hit .jump')[{last_hit}]; if (hit) hit.click(); }}"
+        )
+        page.wait_for_timeout(400)
+        text5 = read_status(page)
+        check("a removed sentence gets the honest message", "no longer on this page" in text5, text5)
+
+        # --- Phase 7: export + scope chips ---
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const b = h && h.shadowRoot && h.shadowRoot.querySelector('.export'); if (b) b.click(); }"
+        )
+        page.wait_for_timeout(400)
+        text6 = read_status(page)
+        check("export copies all matches as markdown", "markdown" in text6 or "copy blocked" in text6, text6)
+
+        scopes = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+            " if (!s) return null; const el = s.querySelector('#t-scope'); if (!el || el.hidden) return null;"
+            " return [...el.querySelectorAll('.scope-chip')].map((c) => c.textContent.trim()); }"
+        )
+        check("scope chips come from the page's headings", bool(scopes) and len(scopes) >= 2, str(scopes)[:140])
+        if scopes:
+            passages_before = seen  # captured from the first search's status line
+            page.evaluate(
+                "() => { const h = document.getElementById('tracky-root');"
+                " const c = h.shadowRoot.querySelectorAll('.scope-chip')[1]; if (c) c.click(); }"
+            )
+            text7 = ""
+            for _ in range(600):  # scoped re-search runs a real helper pass
+                text7 = read_status(page)
+                if "passages ·" in text7 and "· “" in text7:
+                    break
+                time.sleep(0.1)
+            passages_after = page.evaluate(
+                "() => { const m = document.getElementById('tracky-root').shadowRoot.querySelector('#t-status').textContent.match(/(\\d+) passages/);"
+                " return m ? Number(m[1]) : -1; }"
+            )
+            check(
+                "clicking a scope chip re-searches only that section",
+                0 < passages_after < passages_before and "· “" in text7,
+                f"{passages_before} -> {passages_after} · {text7[:90]}",
+            )
+
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const i = h.shadowRoot.querySelector('input'); i.focus(); i.select(); }"
+        )
+        page.keyboard.type("how do i file a tax return for my pet dragon", delay=6)
+        page.keyboard.press("Enter")
+        for _ in range(300):
+            text6 = read_status(page)
+            if "match" in text6 or "failed" in text6 or "not running" in text6:
+                break
+            time.sleep(0.1)
+        empty = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const e = h && h.shadowRoot && h.shadowRoot.querySelector('.empty'); return e ? e.textContent : ''; }"
+        )
+        check("zero matches shows the honest empty state", "No meaning matches" in empty and "try rephrasing" in empty, empty[:110])
 
         # Esc closes; a second real gesture reopens.
         page.keyboard.press("Escape")
@@ -234,6 +423,215 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         except Exception:
             reopened = False
         check("second Alt+K reopens the panel", second and reopened)
+
+        # The deny-list matcher lives in shared.js and is loaded by the service worker —
+        # unit-test it right there, where the injection gate actually runs it.
+        hm = worker.evaluate(
+            """() => ({
+                exact: hostMatches('example.com', 'example.com'),
+                sub: hostMatches('mail.example.com', 'example.com'),
+                deep: hostMatches('a.b.example.com', 'example.com'),
+                upper: hostMatches('MAIL.Example.COM', 'Example.com'),
+                lookalike: hostMatches('notexample.com', 'example.com'),
+                empty: hostMatches('example.com', ''),
+                denied: hostDenied('mail.example.com', ['example.com']),
+                allowed: hostDenied('mail.example.com', ['other.com'])
+            })"""
+        )
+        check(
+            "deny list matches the host and its subdomains (SW unit check)",
+            hm["exact"] and hm["sub"] and hm["deep"] and hm["upper"] and hm["denied"]
+            and not hm["lookalike"] and not hm["empty"] and not hm["allowed"],
+            str(hm),
+        )
+
+        # End-to-end deny list: with this page's host listed, the live panel says it is off,
+        # and a fresh page gets no injection at all (the service-worker gate). The fixture
+        # host is listed too because the fresh page below is served from it.
+        page_host = urlparse(page_url).hostname or "127.0.0.1"
+        deny_js = json.dumps([page_host, "127.0.0.1"])
+        worker.evaluate(
+            f"() => chrome.storage.local.set({{ trackyOpts: {{ hijackCtrlF: true, countSearches: true, disabledHosts: {deny_js} }} }})"
+        )
+        page.wait_for_timeout(500)
+        worker.evaluate(
+            """async () => {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                await chrome.tabs.sendMessage(tab.id, { type: "tracky:open" });
+            }"""
+        )
+        page.wait_for_timeout(400)
+        denied_status = read_status(page)
+        check(
+            "deny list reaches the live panel (content-script mirror)",
+            "off for this site" in denied_status,
+            denied_status[:90],
+        )
+
+        denied_page = ctx.new_page()
+        denied_page.goto(f"{FIXTURE_BASE}/tos.html", wait_until="load")
+        denied_page.wait_for_timeout(400)
+        press_shortcut("Car Rental Agreement")
+        denied_page.wait_for_timeout(700)
+        injected = denied_page.evaluate("() => !!document.getElementById('tracky-root')")
+        badge_denied = ""
+        for _ in range(20):
+            badge_denied = worker.evaluate(
+                """async () => {
+                    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                    return chrome.action.getBadgeText({ tabId: tab.id });
+                }"""
+            )
+            if badge_denied == "–":
+                break
+            time.sleep(0.1)
+        check(
+            "deny list blocks injection on a fresh page (SW gate)",
+            (not injected) and badge_denied == "–",
+            f"injected={injected} badge={badge_denied!r}",
+        )
+        denied_page.close()
+        # Back to an empty deny list so the remaining checks behave normally.
+        worker.evaluate(
+            "() => chrome.storage.local.set({ trackyOpts: { hijackCtrlF: true, countSearches: true, disabledHosts: [] } })"
+        )
+        page.wait_for_timeout(300)
+
+        # ---- Phase 9: live debounce, history, cache, rescan, keyboard, a11y, options ----
+        # Reset the scope first: earlier checks left a section selected.
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const c = h.shadowRoot.querySelectorAll('.scope-chip')[0]; if (c) c.click(); }"
+        )
+        page.wait_for_timeout(600)
+
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const i = h.shadowRoot.querySelector('input'); i.focus(); i.select(); }"
+        )
+        page.keyboard.type("security deposit", delay=12)  # NO Enter — the 700 ms debounce must search
+        debounced_hits = 0
+        for _ in range(250):  # debounce + a real helper pass
+            debounced_hits = page.evaluate(
+                "() => { const h = document.getElementById('tracky-root');"
+                " const s = h && h.shadowRoot; return s ? s.querySelectorAll('.hit').length : 0; }"
+            )
+            if debounced_hits:
+                break
+            time.sleep(0.1)
+        check("live search: typing alone finds matches (700 ms debounce)", debounced_hits >= 1, f"{debounced_hits} hits")
+
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const i = h.shadowRoot.querySelector('input'); i.focus(); i.select(); }"
+        )
+        page.keyboard.type("cancellation", delay=8)
+        page.keyboard.press("Enter")
+        for _ in range(300):
+            if "passages ·" in read_status(page):
+                break
+            time.sleep(0.1)
+
+        # Empty the field → history chips appear; clicking one must hit the cache.
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const i = h.shadowRoot.querySelector('input'); i.focus(); i.select(); }"
+        )
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(300)
+        recents = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+            " const el = s && s.querySelector('#t-recent'); if (!el || el.hidden) return null;"
+            " return [...el.querySelectorAll('.recent-chip')].map((c) => c.textContent); }"
+        )
+        check(
+            "history chips appear while the field is empty",
+            bool(recents) and any("security deposit" in r for r in recents),
+            str(recents)[:130],
+        )
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const c = [...h.shadowRoot.querySelectorAll('.recent-chip')].find((x) => x.textContent.includes('security deposit'));"
+            " if (c) c.click(); }"
+        )
+        cached_text = ""
+        for _ in range(200):
+            cached_text = read_status(page)
+            if "cached" in cached_text:
+                break
+            time.sleep(0.1)
+        check("a repeat question is answered from cache (no helper call)", "cached" in cached_text, cached_text[:95])
+
+        # Rescan forces a fresh pass over a possibly-changed page.
+        page.evaluate("() => document.getElementById('tracky-root').shadowRoot.querySelector('#t-rescan').click()")
+        rescanned = ""
+        for _ in range(300):
+            rescanned = read_status(page)
+            if "ms" in rescanned and "cached" not in rescanned:
+                break
+            time.sleep(0.1)
+        check("rescan button forces a fresh pass", "ms" in rescanned and "cached" not in rescanned, rescanned[:95])
+
+        # ArrowDown from the input moves focus into the result list.
+        page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); h.shadowRoot.querySelector('input').focus(); }"
+        )
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(200)
+        focus_cls = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const a = h && h.shadowRoot && h.shadowRoot.activeElement; return a ? a.className : ''; }"
+        )
+        check("ArrowDown moves focus into the result list", "jump" in (focus_cls or ""), focus_cls)
+
+        # Ctrl+F: the key must be delivered to the RENDERER, which is where our handler
+        # lives. xdotool cannot do that here — proven by spikes/ctrlf-debug.py: in this
+        # Xvfb session a plain xdotool key never reaches the page (only browser-level
+        # shortcuts like Alt+K do), while CDP delivers exactly what Chrome hands the
+        # renderer on a real Ctrl+F. The panel is already injected at this point
+        # (second Alt+K above), which is the precondition for the hijack.
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Control+f")
+        try:
+            page.wait_for_function(WAIT_VISIBLE, timeout=6000)
+            ctrl_f_open = True
+        except Exception:
+            ctrl_f_open = False
+        check("Ctrl+F opens Tracky (hijack option, default on)", ctrl_f_open)
+
+        # Reduced motion: the pulsing dot must stop animating.
+        page.emulate_media(reduced_motion="reduce")
+        page.wait_for_timeout(200)
+        anim = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root');"
+            " const d = h && h.shadowRoot && h.shadowRoot.querySelector('#t-dot');"
+            " return d ? getComputedStyle(d).animationName : 'missing'; }"
+        )
+        check("prefers-reduced-motion stops the pulse", anim == "none", str(anim))
+        page.emulate_media(reduced_motion="no-preference")
+
+        # The options page is a real page — open it and read it.
+        opts_url = worker.evaluate("() => chrome.runtime.getURL('options.html')")
+        op = ctx.new_page()
+        op.goto(opts_url, wait_until="load")
+        op.wait_for_timeout(400)
+        opts_title = op.evaluate("() => document.querySelector('h1')?.textContent ?? ''")
+        helper_line = ""
+        for _ in range(60):  # the options page pings the helper itself
+            helper_line = op.evaluate("() => document.getElementById('htext')?.textContent ?? ''")
+            if "ready" in helper_line or "not running" in helper_line:
+                break
+            time.sleep(0.1)
+        opts_widgets = op.evaluate(
+            "() => ({ hijack: !!document.getElementById('hijack'), hosts: !!document.getElementById('hosts'), reset: !!document.getElementById('reset') })"
+        )
+        check(
+            "options page loads and reports the helper",
+            "Tracky options" in opts_title and "ready" in helper_line and all(opts_widgets.values()),
+            f"{opts_title.strip()[:40]} · {helper_line[:50]}",
+        )
+        op.close()
 
         # unsupported page: file:// gets the × badge and no panel
         page.goto((FIXTURES / "tos.html").as_uri(), wait_until="load")
@@ -264,9 +662,11 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
 
 
 def main() -> int:
+    global FIXTURE_BASE
     OUT.mkdir(parents=True, exist_ok=True)
     profile = Path(tempfile.mkdtemp(prefix="tracky-profile-"))
     httpd, port = serve_fixtures()
+    FIXTURE_BASE = f"http://127.0.0.1:{port}"
     page_url = os.environ.get("TRACKY_SMOKE_URL") or f"http://127.0.0.1:{port}/tos.html"
     try:
         with sync_playwright() as pw:
