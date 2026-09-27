@@ -290,7 +290,7 @@ const HELPER_PASSAGES_MAX = 1200; // the helper's ceiling, mirrored here
 /** Collect blocks from the user's other http(s) tabs. Returns what it skipped, too. */
 async function collectFromTabs(currentTabId, budget) {
   // Normalised shape on every return: callers never have to guess which fields exist.
-  const skipped = { blocked: 0, denied: 0, restricted: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
+  const skipped = { blocked: 0, denied: 0, restricted: 0, noCollector: 0, empty: 0, current: 0, over: 0, budget: 0, hung: 0 };
   const done = (patch) => ({ on: true, tabs: [], perTab: 0, skippedNote: "", skipped, ...patch });
   budget = Number.isFinite(budget) ? Math.floor(budget) : 0; // a bad budget reads nothing, never NaN
   if (budget <= 0) return done({ skippedNote: "no room" }); // nothing to read, nothing to ask
@@ -392,7 +392,8 @@ async function collectFromTabs(currentTabId, budget) {
   for (const { tab, blocks, hung } of settled) {
     if (!tab || blocks === null) {
       if (hung) skipped.hung++;
-      else skipped.restricted++;
+      else if (!tab) skipped.restricted++; // the tab is gone or not permitted
+      else skipped.noCollector++; // the page never offered a collector (a mismatch, not a refusal)
       continue;
     }
     if (!blocks.length) {
@@ -441,27 +442,32 @@ async function searchWithTabs({ query, passages, currentTabId }) {
   }
   // Payload ceiling as well as a passage ceiling: one enormous page must not push the
   // request past what the helper accepts, so the text budget is enforced as we merge.
+  // Each passage also carries an id and JSON punctuation, so the cost is text + 40.
+  const cost = (t) => t.length + 40;
   let chars = 0;
-  for (const p of local) if (typeof p?.text === "string") chars += p.text.length;
+  for (const p of local) if (typeof p?.text === "string") chars += cost(p.text);
   let done = false;
   for (const t of gathered.tabs) {
     if (done) break;
     for (const b of t.blocks) {
+      // Both ceilings stop the merge the same way, and both are counted: the search
+      // must be able to say how much was left out and why.
       if (merged.length >= HELPER_PASSAGES_MAX || chars >= CROSS_CHARS) {
+        gathered.skipped.budget++;
         done = true;
         break;
       }
       // Only well-formed passages cross the boundary: an id and non-empty text.
       if (typeof b?.id !== "string" || typeof b.text !== "string" || !b.text.length) continue;
-      if (chars + b.text.length > CROSS_CHARS) {
-        gathered.skipped.budget++; // the collector's own bucket, not a fresh variable
+      if (chars + cost(b.text) > CROSS_CHARS) {
+        gathered.skipped.budget++;
         done = true;
         break;
       }
       const id = `p${nextId++}`;
       map.set(id, { tabId: t.tabId, title: t.title, url: t.url });
       merged.push({ id, text: b.text });
-      chars += b.text.length;
+      chars += cost(b.text);
     }
   }
 
@@ -476,9 +482,11 @@ async function searchWithTabs({ query, passages, currentTabId }) {
     crossTab: {
       enabled: true,
       tabs: gathered.tabs.length,
+      // Only the tabs that actually contributed passages: a tab whose blocks were all
+      // dropped by a ceiling must not be listed as if it were searched.
+      titles: [...new Set([...map.values()].map((m) => m.title))],
       passages: map.size,
       skipped: gathered.skipped,
-      titles: gathered.tabs.map((t) => t.title),
     },
   };
 }

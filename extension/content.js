@@ -359,12 +359,22 @@
 
   const sanitizeResults = (raw) =>
     (Array.isArray(raw) ? raw : [])
-      .map((r) => ({
-        passageId: typeof r?.passageId === "string" ? r.passageId : "",
-        sentence: typeof r?.sentence === "string" ? r.sentence : "",
-        score: Math.min(1, Math.max(0, Number(r?.score))), // clamp: never render >100% or <0%
-        offset: Number(r?.offset),
-      }))
+      .map((r) => {
+        // A hit that came from another tab keeps its origin — dropping this field here
+        // is what would make a cross-tab hit render as if it were from this page.
+        const t = r?.tab;
+        const tab =
+          t && typeof t === "object" && Number.isFinite(Number(t.tabId))
+            ? { tabId: Number(t.tabId), title: String(t.title ?? ""), url: String(t.url ?? "") }
+            : null;
+        return {
+          passageId: typeof r?.passageId === "string" ? r.passageId : "",
+          sentence: typeof r?.sentence === "string" ? r.sentence : "",
+          score: Math.min(1, Math.max(0, Number(r?.score))), // clamp: never render >100% or <0%
+          offset: Number(r?.offset),
+          ...(tab ? { tab } : {}),
+        };
+      })
       .filter((r) => r.sentence.length > 0 && Number.isFinite(r.score) && r.passageId !== "")
       .slice(0, 12); // a rogue helper must never be able to bloat the panel
 
@@ -589,12 +599,13 @@
     if (skipped.blocked) notes.push(`${skipped.blocked} that cannot be scripted (PDFs, chrome:// pages)`);
     if (skipped.denied) notes.push(`${skipped.denied} on your deny list`);
     if (skipped.restricted) notes.push(`${skipped.restricted} Tracky has no permission for`);
+    if (skipped.noCollector) notes.push(`${skipped.noCollector} that did not offer a collector`);
     if (skipped.over) notes.push(`${skipped.over} beyond the 6-tab limit`);
     if (skipped.budget) notes.push(`${skipped.budget} with no room left in this search`);
     if (skipped.empty) notes.push(`${skipped.empty} with nothing readable`);
-    if (skipped.current) notes.push(`${skipped.current} (this tab)`);
     if (skipped.hung) notes.push(`${skipped.hung} that stopped answering`);
     if (meta?.note) notes.push(meta.note);
+    // "1 (this tab)" on every search would be noise — the panel is that tab.
     out.push(
       `<div class="card-foot" style="padding:8px 12px 2px">Quoted from your other tabs — nothing leaves them until you search.${
         notes.length ? ` Skipped: ${notes.join(", ")}.` : ""

@@ -97,8 +97,10 @@ def main() -> int:
     # Three distinct pages so a collected tab is identifiable by its text.
     pages = {
         "alpha": "<html><body><h1>Alpha</h1><p>" + "Alpha page talks about refunds and the thirty day window. " * 4 + "</p></body></html>",
-        "beta": "<html><body><h1>Beta</h1><p>" + "Beta page covers delivery delays and courier handover rules. " * 4 + "</p></body></html>",
-        "gamma": "<html><body><h1>Gamma</h1><p>" + "Gamma page explains warranty claims and repair timelines. " * 4 + "</p></body></html>",
+        # Both non-current pages answer the smoke's question, so a cross-tab hit is
+        # forced whichever of them the collector happens to merge.
+        "beta": "<html><body><h1>Beta</h1><p>" + "Beta page explains that a delayed delivery is rebooked within two days. " * 4 + "</p></body></html>",
+        "gamma": "<html><body><h1>Gamma</h1><p>" + "Gamma page explains that a delayed shipment is tracked and rebooked within two days. " * 4 + "</p></body></html>",
     }
     tmp = tempfile.TemporaryDirectory(prefix="tracky-xtab-pages-")
     for name, html in pages.items():
@@ -228,7 +230,10 @@ def main() -> int:
                     const h = document.getElementById('tracky-root');
                     const root = h.shadowRoot;
                     const input = root.querySelector('input');
-                    input.value = 'what happens to my refund?';
+                    // A question only the *other* tabs answer: alpha (this tab) is about
+                    // refunds, while both other pages describe a delayed delivery being
+                    // rebooked — so a cross-tab hit is the only correct outcome.
+                    input.value = 'what happens when a delivery is delayed?';
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     root.querySelector('input').focus();
                     // Run the panel's own search path with cross-tab on.
@@ -245,6 +250,8 @@ def main() -> int:
                         status: root.querySelector('#t-status')?.textContent ?? '',
                         cross: root.querySelectorAll('.hit.other').length,
                         groups: [...root.querySelectorAll('.group')].map(g => g.textContent.trim()),
+                        hits: root.querySelectorAll('.hit').length,
+                        foot: root.querySelector('.card-foot')?.textContent ?? '',
                     };
                 }"""
             )
@@ -259,7 +266,11 @@ def main() -> int:
                     (result["status"] or "no status")[:90],
                 )
             else:
-                check("the merged search labels hits from other tabs", result["cross"] >= 1, f"{result['cross']} other-tab hit(s)")
+                check(
+                    "the merged search labels hits from other tabs",
+                    result["cross"] >= 1,
+                    f"{result['cross']} other-tab hit(s) of {result['hits']} · {result['foot'][:70]}",
+                )
                 check("a cross-tab group header is shown", any("other tabs" in g for g in result["groups"]), "; ".join(result["groups"])[:120])
 
             OUT.mkdir(parents=True, exist_ok=True)
