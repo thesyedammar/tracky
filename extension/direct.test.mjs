@@ -483,3 +483,77 @@ test("testKey: no key fails as NO_KEY before any request is built", async () => 
   );
   assert.equal(calls, 0, "no route call is wasted on a request that cannot work");
 });
+
+// --------------------------------------------- the model's own token cap (max_tokens_exceeded)
+
+test("chunkPrepared: chunks are sized by the request, not by passage count", () => {
+  // Dense text: every chunk's REAL serialized body must stay under the budget, and all
+  // the passages must survive, in order. (A 58-page paper used to die here: its
+  // 80-passage batch measured 237,806 body chars ≈ 71k tokens against a 64k cap.)
+  const passages = Array.from({ length: 100 }, (_, i) => ({ id: `p${i}`, text: `Dense passage ${i}. `.repeat(120) }));
+  const chunks = D.chunkPrepared(D.preparePassages(passages));
+  assert.ok(chunks.length > 2, `dense text must chunk below BATCH_MAX (got ${chunks.length})`);
+  const flat = chunks.flat();
+  assert.deepEqual(flat.map((p) => p.id), passages.map((p) => p.id), "order preserved, nothing dropped");
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= D.BATCH_MAX, "never more passages than the batch cap");
+    const body = D.buildRequest({ query: "fees", passages: chunk, model: config.model });
+    const len = JSON.stringify(body).length;
+    assert.ok(len <= D.MAX_BODY_CHARS, `body ${len} must stay under ${D.MAX_BODY_CHARS}`);
+  }
+});
+
+test("chunkPrepared: ordinary pages still ride the full 80-per-request batching", () => {
+  const passages = Array.from({ length: 161 }, (_, i) => ({ id: `p${i}`, text: `Passage ${i} has a fee. And more.` }));
+  const chunks = D.chunkPrepared(D.preparePassages(passages));
+  assert.deepEqual(chunks.map((c) => c.length), [80, 80, 1]);
+});
+
+test("chunkPrepared: a nonsense budget is refused, not guessed", () => {
+  assert.throws(() => D.chunkPrepared([], { maxBodyChars: 0 }), (e) => e instanceof SearchError && e.status === 500);
+});
+
+test("upstreamErrorType: reads the route's own error shape, stays quiet on junk", () => {
+  assert.equal(D.upstreamErrorType('{"detail":{"error_type":"max_tokens_exceeded"}}'), "max_tokens_exceeded");
+  assert.equal(D.upstreamErrorType('{"type":"error","error":{"type":"FreeUsageLimitError"}}'), "FreeUsageLimitError");
+  assert.equal(D.upstreamErrorType("not json"), null);
+  assert.equal(D.upstreamErrorType("{}"), null);
+});
+
+test("searchText: a 'too big' answer halves the chunk and still sweeps every passage", async () => {
+  // The route rejects any request over 40k body chars with the real 400 shape; the
+  // engine must halve and retry instead of failing the whole document.
+  const seen = new Set();
+  let calls = 0;
+  const fetchImpl = async (_url, init) => {
+    calls++;
+    const body = JSON.parse(init.body);
+    if (init.body.length > 40_000) {
+      return response({ detail: { error_type: "max_tokens_exceeded" } }, { ok: false, status: 400 });
+    }
+    for (const p of body.state.passages) seen.add(p.id);
+    return response({ answers: allRelevant(body) });
+  };
+  const passages = Array.from({ length: 100 }, (_, i) => ({ id: `p${i}`, text: `Dense passage ${i}. `.repeat(120) }));
+  const out = await D.searchText({ query: "fees", passages }, { config, fetchImpl });
+  assert.equal(seen.size, 100, "every passage must reach the model, via however many halves it takes");
+  assert.ok(calls > out.stats.chunks, `halving must add requests (calls ${calls} vs chunks ${out.stats.chunks})`);
+  assert.equal(out.stats.requests, calls);
+  assert.ok(out.results.length > 0 && out.results.length <= D.LIMITS.resultsMax, `ranked results stay within the cap (${out.results.length})`);
+});
+
+test("searchText: a single passage too big on its own is an honest 413, not a fake 502", async () => {
+  const fetchImpl = async () => response({ detail: { error_type: "max_tokens_exceeded" } }, { ok: false, status: 400 });
+  await assert.rejects(
+    () => D.searchText({ query: "q", passages: [{ id: "p0", text: "one dense passage. ".repeat(50) }] }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 413 && /too big for the model on its own/.test(e.message),
+  );
+});
+
+test("searchText: another 400 keeps its own words and says which kind it was", async () => {
+  const fetchImpl = async () => response({ detail: { error_type: "bad_request_body" } }, { ok: false, status: 400 });
+  await assert.rejects(
+    () => D.searchText({ query: "q", passages: [{ id: "p0", text: "x" }] }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 502 && /HTTP 400 \(bad_request_body\)/.test(e.message),
+  );
+});

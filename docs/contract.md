@@ -76,7 +76,10 @@ Guarantees:
 ## Errors
 
 - `400 { "message": "..." }` — bad request (malformed JSON, empty query, caps exceeded).
-- `413 { "message": "..." }` — body too large.
+- `413 { "message": "..." }` — body too large (the helper's own body cap), or the model's own input
+  cap (`max_tokens_exceeded`) on a passage that is too big even on its own. Both engines size each
+  request by its real body size (`MAX_BODY_CHARS`) and halve a chunk when the route answers "too
+  big", so this surfaces only when a single passage is too big alone.
 - `502 { "message": "..." }` — upstream (Jev) failure or an unvalidatable answer. Retry-safe.
 
 Clients should show `message` for 4xx/5xx, and a "helper not running" state on network failure (fetch throws).

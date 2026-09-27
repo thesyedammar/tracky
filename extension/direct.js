@@ -62,6 +62,15 @@
 
   /** One request per batch — larger passage sets are swept in chunks of this size. */
   const BATCH_MAX = 80;
+
+  /** The model's own input cap, measured live (not guessed): a 65,291-token request
+   *  passed and a ~66k one came back {"detail":{"error_type":"max_tokens_exceeded"}} —
+   *  a 64k (65,536) input-token ceiling. Request body chars → tokens runs ~0.30 for the
+   *  densest text seen (a 58-page academic PDF; plain English is ~0.25), so this budget
+   *  leaves about 25% headroom on that ratio. Chunks are sized by the REQUEST, never by
+   *  passage count alone: every passage carries its sentences twice (text + focus
+   *  criteria) plus two questions, so the body runs ~2.5x the passage text. */
+  const MAX_BODY_CHARS = 140_000;
   const DEFAULT_TIMEOUT_MS = 20_000; // per call (same as the helper's engine)
   /** Whole-search budget. The panel gives up at 45s; stopping here means a sweep that
    *  cannot finish ends with a clear reason instead of leaving the panel to time out —
@@ -387,7 +396,14 @@
         throw new SearchError(msg, 429);
       }
       if (res.status === 401 || res.status === 403) throw new SearchError("Jev rejected the key — check it in Tracky's options.", res.status);
-      throw failure(`Jev answered HTTP ${res.status} — try again in a moment.`);
+      // The model's own input cap: {"detail":{"error_type":"max_tokens_exceeded"}}.
+      // The engine sizes chunks under it and halves on this exact answer, so it only
+      // surfaces when one passage alone is too big — an honest 413, never a fake 502.
+      const kind = upstreamErrorType(text);
+      if (kind === "max_tokens_exceeded") {
+        throw new SearchError("This passage is too big for the model on its own — try a smaller scope.", 413);
+      }
+      throw failure(`Jev answered HTTP ${res.status}${kind ? ` (${kind})` : ""} — try again in a moment.`);
     }
     try {
       return { data: JSON.parse(text) };
@@ -396,10 +412,51 @@
     }
   }
 
+  /** The route's own error type, when it sends one: {"detail":{"error_type":"…"}}. */
+  const upstreamErrorType = (text) => {
+    try {
+      const d = JSON.parse(text);
+      return d?.detail?.error_type || d?.error?.type || null;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Split prepared passages into request-sized chunks: up to BATCH_MAX passages, and
+   * never a request whose body would run past MAX_BODY_CHARS. Sized by the request, not
+   * by passage count — a dense document must not die on the model's token cap (it used
+   * to: "search failed — Jev answered HTTP 400" on a 58-page paper whose 80-passage
+   * batch measured 237,806 body chars ≈ 71k tokens).
+   */
+  function chunkPrepared(prepared, { query, model, maxBodyChars = MAX_BODY_CHARS } = {}) {
+    if (!Number.isFinite(maxBodyChars) || maxBodyChars <= 0) {
+      throw new SearchError("maxBodyChars must be a positive number.", 500);
+    }
+    const chunks = [];
+    let cur = [];
+    let est = 400; // the request scaffold: model, state.search, questions braces
+    for (const p of prepared) {
+      // Measured, not guessed: text + criteria (which duplicate the sentences, keys and
+      // all) + two question texts + ids. A 2,040-char passage with 120 sentences really
+      // costs 5,757 body chars — the per-sentence keys are why the count is here.
+      const cost = p.text.length * 2 + p.sentences.length * 10 + 640;
+      if (cur.length && (cur.length >= BATCH_MAX || est + cost > maxBodyChars)) {
+        chunks.push(cur);
+        cur = [];
+        est = 400;
+      }
+      cur.push(p);
+      est += cost;
+    }
+    if (cur.length) chunks.push(cur);
+    return chunks;
+  }
+
   /**
    * Run a meaning-search. Mirrors server/search.mjs, minus progress/abort.
    * opts: { config, fetchImpl, timeoutMs, budgetMs, rank }
-   * returns { results, stats: { chunks, passages, ms, usage } }
+   * returns { results, stats: { chunks, requests, passages, ms, usage } }
    */
   async function searchText({ query, passages }, opts = {}) {
     const { config, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, budgetMs = DEFAULT_BUDGET_MS, rank } = opts;
@@ -408,34 +465,48 @@
     if (!Number.isFinite(budgetMs) || budgetMs <= 0) throw new SearchError("budgetMs must be a positive number.", 500);
     const input = validateSearchInput({ query, passages });
     const prepared = preparePassages(input.passages);
-    const chunkCount = Math.ceil(prepared.length / BATCH_MAX);
+    const chunks = chunkPrepared(prepared, { query: input.query, model: config.model });
 
     const started = now();
     const usage = { input_tokens: 0, output_tokens: 0 };
     const consumed = [];
-    for (let i = 0; i < prepared.length; i += BATCH_MAX) {
-      // Never start a chunk the panel will not wait for: the first chunk always runs
+    let requests = 0;
+
+    /** One request, with the model's own token cap handled instead of feared: a
+     *  "too big" answer splits the chunk in half and retries each half (down to a
+     *  single passage), so a dense document completes instead of failing the whole
+     *  search. Only a single passage too big on its own is a real failure. */
+    const askChunk = async (chunk) => {
+      // Never start a request the panel will not wait for: the first one always runs
       // (a slow route must not turn one call into an instant error), later ones only
       // while the budget holds. Same reason the helper reports the real wait on a 429.
-      if (i > 0 && now() - started > budgetMs) {
+      if (requests > 0 && now() - started > budgetMs) {
         throw new SearchError(
           "Jev is answering slowly — search timed out before the whole page was swept. Try again, or scope the search to a section.",
           502,
         );
       }
-      const chunk = prepared.slice(i, i + BATCH_MAX);
-      const body = buildRequest({ query: input.query, passages: chunk, model: config.model });
-      // The per-call timeout never outlives the whole-search budget: a chunk that starts
+      // The per-call timeout never outlives the whole-search budget: a call that starts
       // at 39s gets ~1s, so the total cannot run past the panel's own 45s wait.
+      const body = buildRequest({ query: input.query, passages: chunk, model: config.model });
       const remaining = budgetMs - (now() - started);
-      const { data } = await askJev(body, { config, fetchImpl, timeoutMs: Math.max(1_000, Math.min(timeoutMs, remaining)) });
-      usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
-      usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
-      consumed.push(...parseJevAnswers(data, chunk));
-    }
+      requests++;
+      try {
+        const { data } = await askJev(body, { config, fetchImpl, timeoutMs: Math.max(1_000, Math.min(timeoutMs, remaining)) });
+        usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
+        usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
+        return parseJevAnswers(data, chunk);
+      } catch (e) {
+        if (e?.status !== 413 || chunk.length === 1) throw e;
+        const mid = Math.ceil(chunk.length / 2);
+        return [...(await askChunk(chunk.slice(0, mid))), ...(await askChunk(chunk.slice(mid)))];
+      }
+    };
+
+    for (const chunk of chunks) consumed.push(...(await askChunk(chunk)));
     return {
       results: rankResults(dedupeResults(consumed), rank ?? {}),
-      stats: { chunks: chunkCount, passages: prepared.length, ms: Math.round(now() - started), usage },
+      stats: { chunks: chunks.length, requests, passages: prepared.length, ms: Math.round(now() - started), usage },
     };
   }
 
@@ -571,6 +642,9 @@
     SearchError,
     LIMITS,
     BATCH_MAX,
+    MAX_BODY_CHARS,
+    chunkPrepared,
+    upstreamErrorType,
     DEFAULT_TIMEOUT_MS,
     DEFAULT_BUDGET_MS,
     NO_KEY,

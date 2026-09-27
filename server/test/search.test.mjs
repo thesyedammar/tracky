@@ -313,3 +313,63 @@ test("plumbing guards: bad timeout and bad fetchImpl are clean 500s", async () =
   );
   assert.equal(ok.results.length, 1);
 });
+
+// --------------------------------------------- the model's own token cap (max_tokens_exceeded)
+
+test("chunkPrepared: chunks are sized by the request, not by passage count", async () => {
+  const { chunkPrepared, MAX_BODY_CHARS } = await import("../search.mjs");
+  const { preparePassages } = await import("../jev.mjs");
+  const { buildRequest } = await import("../jev.mjs");
+  const passages = makePassages(100, (i) => `Dense passage ${i}. `.repeat(120));
+  const chunks = chunkPrepared(preparePassages(passages));
+  assert.ok(chunks.length > 2, `dense text must chunk below BATCH_MAX (got ${chunks.length})`);
+  assert.deepEqual(chunks.flat().map((p) => p.id), passages.map((p) => p.id), "order preserved, nothing dropped");
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= BATCH_MAX, "never more passages than the batch cap");
+    const len = JSON.stringify(buildRequest({ query: "fee", passages: chunk, model: config.model })).length;
+    assert.ok(len <= MAX_BODY_CHARS, `body ${len} must stay under ${MAX_BODY_CHARS}`);
+  }
+});
+
+test("chunkPrepared: ordinary pages still ride the full 80-per-request batching", async () => {
+  const { chunkPrepared } = await import("../search.mjs");
+  const { preparePassages } = await import("../jev.mjs");
+  const chunks = chunkPrepared(preparePassages(makePassages(161)));
+  assert.deepEqual(chunks.map((c) => c.length), [80, 80, 1]);
+});
+
+test("searchText: a 'too big' answer halves the chunk and still sweeps every passage", async () => {
+  // The route rejects any request over 40k body chars with the real 400 shape; the
+  // engine must halve and retry instead of failing the whole document.
+  const seen = new Set();
+  let calls = 0;
+  const fetchImpl = async (_url, init) => {
+    calls++;
+    const body = JSON.parse(init.body);
+    if (init.body.length > 40_000) {
+      return response({ detail: { error_type: "max_tokens_exceeded" } }, { ok: false, status: 400 });
+    }
+    for (const p of body.state.passages) seen.add(p.id);
+    return response({ answers: allRelevant(body) });
+  };
+  const { stats } = await searchText({ query: "fee", passages: makePassages(100, (i) => `Dense passage ${i}. `.repeat(120)) }, { config, fetchImpl });
+  assert.equal(seen.size, 100, "every passage must reach the model, via however many halves it takes");
+  assert.ok(calls > stats.chunks, `halving must add requests (calls ${calls} vs chunks ${stats.chunks})`);
+  assert.equal(stats.requests, calls);
+});
+
+test("searchText: a single passage too big on its own is an honest 413, not a fake 502", async () => {
+  const fetchImpl = async () => response({ detail: { error_type: "max_tokens_exceeded" } }, { ok: false, status: 400 });
+  await assert.rejects(
+    () => searchText({ query: "q", passages: makePassages(1, () => "one dense passage. ".repeat(50)) }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 413 && /too big for the model on its own/.test(e.message),
+  );
+});
+
+test("searchText: another 400 keeps its own words and says which kind it was", async () => {
+  const fetchImpl = async () => response({ detail: { error_type: "bad_request_body" } }, { ok: false, status: 400 });
+  await assert.rejects(
+    () => searchText({ query: "q", passages: makePassages(1) }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 502 && /HTTP 400 \(bad_request_body\)/.test(e.message),
+  );
+});

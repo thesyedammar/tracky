@@ -6,6 +6,56 @@ import { preparePassages, buildRequest, BATCH_MAX } from "./jev.mjs";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/** The model's own input cap, measured live (not guessed): a 65,291-token request
+ *  passed and a ~66k one came back {"detail":{"error_type":"max_tokens_exceeded"}} —
+ *  a 64k (65,536) input-token ceiling. Request body chars → tokens runs ~0.30 for the
+ *  densest text seen (a 58-page academic PDF; plain English is ~0.25), so this budget
+ *  leaves about 25% headroom on that ratio. Chunks are sized by the REQUEST, never by
+ *  passage count alone: every passage carries its sentences twice (text + focus
+ *  criteria) plus two questions, so the body runs ~2.5x the passage text. */
+export const MAX_BODY_CHARS = 140_000;
+
+/** The route's own error type, when it sends one: {"detail":{"error_type":"…"}}. */
+export function upstreamErrorType(text) {
+  try {
+    const d = JSON.parse(text);
+    return d?.detail?.error_type || d?.error?.type || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Split prepared passages into request-sized chunks: up to BATCH_MAX passages, and
+ * never a request whose body would run past MAX_BODY_CHARS. Sized by the request, not
+ * by passage count — a dense document must not die on the model's token cap (it used
+ * to: "search failed — Jev answered HTTP 400" on a 58-page paper whose 80-passage
+ * batch measured 237,806 body chars ≈ 71k tokens).
+ */
+export function chunkPrepared(prepared, { maxBodyChars = MAX_BODY_CHARS } = {}) {
+  if (!Number.isFinite(maxBodyChars) || maxBodyChars <= 0) {
+    throw new SearchError("maxBodyChars must be a positive number.", 500);
+  }
+  const chunks = [];
+  let cur = [];
+  let est = 400; // the request scaffold: model, state.search, questions braces
+  for (const p of prepared) {
+    // Measured, not guessed: text + criteria (which duplicate the sentences, keys and
+    // all) + two question texts + ids. A 2,040-char passage with 120 sentences really
+    // costs 5,757 body chars — the per-sentence keys are why the count is here.
+    const cost = p.text.length * 2 + p.sentences.length * 10 + 640;
+    if (cur.length && (cur.length >= BATCH_MAX || est + cost > maxBodyChars)) {
+      chunks.push(cur);
+      cur = [];
+      est = 400;
+    }
+    cur.push(p);
+    est += cost;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
+
 /**
  * Run a meaning-search.
  * opts: { config: {baseUrl, model, apiKey}, fetchImpl, timeoutMs, signal, rank, onProgress }
@@ -21,29 +71,44 @@ export async function searchText({ query, passages }, opts = {}) {
   if (signal != null && !(signal instanceof AbortSignal)) throw new SearchError("signal must be an AbortSignal.", 500);
   const input = validateSearchInput({ query, passages });
   const prepared = preparePassages(input.passages);
-  const chunkCount = Math.ceil(prepared.length / BATCH_MAX);
+  const chunks = chunkPrepared(prepared);
 
   const started = performance.now();
   const usage = { input_tokens: 0, output_tokens: 0 };
   const consumed = [];
-  for (let i = 0; i < prepared.length; i += BATCH_MAX) {
+  let requests = 0;
+
+  /** One request, with the model's own token cap handled instead of feared: a "too
+   *  big" answer splits the chunk in half and retries each half (down to a single
+   *  passage), so a dense document completes instead of failing the whole search.
+   *  Only a single passage too big on its own is a real failure (413). */
+  const askChunk = async (chunk) => {
     if (signal?.aborted) throw new SearchError("Search cancelled.", 499); // cancelled during a previous pass
-    const chunk = prepared.slice(i, i + BATCH_MAX);
     const body = buildRequest({ query: input.query, passages: chunk, model: config.model });
-    const { data } = await askJev(body, { config, fetchImpl, timeoutMs, signal });
-    usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
-    usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
-    consumed.push(...parseJevAnswers(data, chunk));
-    onProgress?.({
-      done: consumed.length,
-      total: prepared.length,
-      chunk: i / BATCH_MAX + 1,
-      chunks: chunkCount,
-    });
-  }
+    requests++;
+    try {
+      const { data } = await askJev(body, { config, fetchImpl, timeoutMs, signal });
+      usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
+      usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
+      consumed.push(...parseJevAnswers(data, chunk));
+      onProgress?.({
+        done: consumed.length,
+        total: prepared.length,
+        chunk: requests,
+        chunks: chunks.length,
+      });
+    } catch (e) {
+      if (e?.status !== 413 || chunk.length === 1) throw e;
+      const mid = Math.ceil(chunk.length / 2);
+      await askChunk(chunk.slice(0, mid));
+      await askChunk(chunk.slice(mid));
+    }
+  };
+
+  for (const chunk of chunks) await askChunk(chunk);
   return {
     results: rankResults(dedupeResults(consumed), rank ?? {}),
-    stats: { chunks: chunkCount, passages: prepared.length, ms: Math.round(performance.now() - started), usage },
+    stats: { chunks: chunks.length, requests, passages: prepared.length, ms: Math.round(performance.now() - started), usage },
   };
 }
 
@@ -112,7 +177,15 @@ export async function askJev(body, { config, fetchImpl = fetch, timeoutMs = DEFA
           : "Jev's free route is rate-limited — try again in a few minutes.",
       );
     }
-    throw failure(`Jev answered HTTP ${res.status} — try again in a moment.`);
+    // The model's own input cap: {"detail":{"error_type":"max_tokens_exceeded"}}.
+    // The engine sizes chunks under it and halves on this exact answer, so it only
+    // surfaces when one passage alone is too big — an honest 413, never a fake 502.
+    const kind = upstreamErrorType(text);
+    if (kind === "max_tokens_exceeded") {
+      if (signal?.aborted) throw new SearchError("Search cancelled.", 499); // a cancel outranks any HTTP answer
+      throw new SearchError("This passage is too big for the model on its own — try a smaller scope.", 413);
+    }
+    throw failure(`Jev answered HTTP ${res.status}${kind ? ` (${kind})` : ""} — try again in a moment.`);
   }
   try {
     return { data: JSON.parse(text) };

@@ -93,6 +93,11 @@ page → collect.js   readable blocks + exact char offsets (≤600 blocks, ≤40
   "Allow access to file URLs" toggle (the extension tells you when it is off).
 - **Ctrl+F hijack needs one prior Alt+K on that tab.** The extension deliberately holds no `host_permissions`, so its panel can only exist where you opened it.
 - **Very long pages cost more time** — one model request per 80 passages, run in sequence (a 1,000-passage page is ~13 passes).
+- **A dense document is swept in several requests, not one big one.** The model takes at most 64k input
+  tokens per request (measured against the real route, not guessed), so Tracky sizes every request by its
+  real body size and, if the route still says "too big", halves the batch and retries. A 58-page academic
+  paper used to fail with "HTTP 400" — it now finishes in ~4 passes. Prove any file end to end with
+  `python3 scripts/huge-pdf-check.py <file.pdf> [--mode direct]`.
 - **A paragraph longer than 2,200 characters is split at sentence ends**, not skipped: it becomes two or more passages (highlights still land on the right sentence). A 3,300-char paragraph on a real Wikipedia article used to fail the whole search — that is now a fixture in the test suite (`spikes/fixtures/long-paragraph.html`).
 - **Scores are model opinions**, which is why they are shown as percentages and gated rather than trusted.
 - The cache is per-tab and short-lived (10 minutes, 24 entries).

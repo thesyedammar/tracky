@@ -1,6 +1,6 @@
 {
   "name": "tracky",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "type": "module",
   "description": "Ctrl+F that finds by meaning \u2014 and quotes the exact sentences it found.",
