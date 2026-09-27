@@ -133,7 +133,7 @@ test("loadEnv trims the shared values it returns", () => {
 });
 
 test("a default source with no key is a 503 naming the shared vars", async () => {
-  const bare = { baseUrl: "https://zen.test", model: "jev-1.13", apiKey: "k", defaultId: "default", providers: [{ id: "default", label: "default", kind: "paid", model: "", baseUrl: "", apiKey: "", configured: false }] };
+  const bare = { baseUrl: "https://zen.test", model: "jev-1.13", apiKey: "k", defaultId: "default", providers: [{ id: "default", label: "default", kind: "paid", model: "jev-1.13", baseUrl: "https://zen.test", apiKey: "", configured: false, badUrl: false }] };
   const server = createHelperServer({ config: bare, fetchImpl: answerOk, log: () => {} });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -141,6 +141,64 @@ test("a default source with no key is a 503 naming the shared vars", async () =>
     const res = await post(base, "/api/search", onePassage);
     assert.equal(res.status, 503);
     assert.match((await res.json()).message, /JEV_API_KEY/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("a default source with no model says so, instead of blaming the key", async () => {
+  const bare = { baseUrl: "https://zen.test", model: "jev-1.13", apiKey: "k", defaultId: "default", providers: [{ id: "default", label: "default", kind: "paid", model: "", baseUrl: "https://zen.test", apiKey: "k", configured: false, badUrl: false }] };
+  const server = createHelperServer({ config: bare, fetchImpl: answerOk, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await post(base, "/api/search", onePassage);
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).message, /JEV_MODEL/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("a different port counts as another origin", () => {
+  const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDER_TYPESAFE_BASE_URL: "https://zen.test:8443/x" });
+  assert.equal(providers.find((p) => p.id === "typesafe").apiKey, "");
+});
+
+test("a typo'd provider URL keeps its label and kind, and flags badUrl", () => {
+  const { providers } = resolveProviders({
+    ...baseEnv,
+    JEV_PROVIDER_TYPESAFE_BASE_URL: "not a url",
+    JEV_PROVIDER_TYPESAFE_LABEL: "My TypeSafe",
+    JEV_PROVIDER_TYPESAFE_KIND: "free",
+  });
+  const ts = providers.find((p) => p.id === "typesafe");
+  assert.equal(ts.badUrl, true);
+  assert.equal(ts.label, "My TypeSafe");
+  assert.equal(ts.kind, "free");
+  assert.equal(ts.configured, false);
+});
+
+test("an invalid shared base marks every provider unconfigured", () => {
+  const { providers } = resolveProviders({ ...baseEnv, JEV_BASE_URL: "not a url" });
+  assert.ok(providers.every((p) => !p.configured));
+});
+
+test("/api/providers exposes badUrl and still never leaks a key", async () => {
+  const cfg = {
+    baseUrl: "https://zen.test",
+    model: "jev-1.13",
+    apiKey: "k",
+    defaultId: "typesafe",
+    providers: [{ id: "typesafe", label: "TypeSafe", kind: "paid", model: "x", baseUrl: "not a url", apiKey: "", configured: false, badUrl: true }],
+  };
+  const server = createHelperServer({ config: cfg, fetchImpl: answerOk, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const body = await (await fetch(`${base}/api/providers`)).json();
+    assert.equal(body.providers[0].badUrl, true);
+    assert.ok(!("apiKey" in body.providers[0]));
   } finally {
     await new Promise((r) => server.close(r));
   }

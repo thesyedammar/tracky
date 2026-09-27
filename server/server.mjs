@@ -120,7 +120,19 @@ function pickProvider(config, wanted) {
   if (!asked) {
     const d = providers.find((p) => p.id === config.defaultId);
     if (d && !d.configured) {
-      // The default source lost its key: say so, instead of sending an empty key upstream.
+      // The default source lost its key (or its address): say which, instead of sending an empty key upstream.
+      if (d.badUrl) {
+        throw new SearchError(
+          `The default source "${d.id}" has a broken address — check JEV_PROVIDER_${envSuffix(d.id)}_BASE_URL in server/.env (it needs a full http(s):// URL).`,
+          503,
+        );
+      }
+      if (!d.model) {
+        throw new SearchError(`The default source "${d.id}" has no model — add JEV_MODEL to server/.env.`, 503);
+      }
+      if (!d.baseUrl) {
+        throw new SearchError("The shared JEV_BASE_URL in server/.env looks broken — it needs a full http(s):// URL.", 503);
+      }
       const envName = d.id === "default" ? "JEV_API_KEY (and JEV_MODEL / JEV_BASE_URL)" : `JEV_PROVIDER_${envSuffix(d.id)}_KEY`;
       throw new SearchError(
         `The default source "${d.id}" has no key right now — add ${envName} to server/.env, or pick another source.`,
@@ -138,6 +150,12 @@ function pickProvider(config, wanted) {
     throw new SearchError(`Unknown source "${String(wanted).slice(0, 40)}" — this helper offers: ${names}.`, 400);
   }
   if (!p.configured) {
+    if (p.badUrl) {
+      throw new SearchError(
+        `The source "${id}" has a broken address — check JEV_PROVIDER_${envSuffix(id)}_BASE_URL in server/.env (it needs a full http(s):// URL).`,
+        503,
+      );
+    }
     const envName = `JEV_PROVIDER_${envSuffix(id)}_KEY`;
     throw new SearchError(`The source "${id}" has no key yet — add ${envName} to server/.env and restart the helper.`, 503);
   }
@@ -199,12 +217,13 @@ export function createHelperServer({
       if (path === "/api/providers" && req.method === "GET") {
         return sendJson(res, 200, {
           default: config.defaultId ?? "default",
-          providers: (config.providers ?? []).map(({ id, label, kind, model, configured }) => ({
+          providers: (config.providers ?? []).map(({ id, label, kind, model, configured, badUrl }) => ({
             id,
             label,
             kind,
             model,
             configured,
+            badUrl: Boolean(badUrl),
           })),
         });
       }

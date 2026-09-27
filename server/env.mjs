@@ -39,23 +39,27 @@ export function resolveProviders(target = process.env) {
     ),
   ].filter((id, i, all) => all.findIndex((x) => envSuffix(x) === envSuffix(id)) === i); // two ids that share env vars are one source
   if (!ids.length) ids.push("default");
-  const sharedHost = hostOf(target.JEV_BASE_URL);
+  const sharedBaseRaw = String(target.JEV_BASE_URL || "").trim();
+  const sharedBase = hostOf(sharedBaseRaw) ? sharedBaseRaw : ""; // an invalid shared base is no base at all
+  const sharedOrigin = hostOf(sharedBaseRaw);
+  const sharedKey = String(target.JEV_API_KEY || "").trim();
   const providers = ids.map((id) => {
     const P = `JEV_PROVIDER_${envSuffix(id)}_`;
     const model = String(target[P + "MODEL"] || target.JEV_MODEL || "").trim();
-    const ownBaseRaw = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
-    const ownBase = ownBaseRaw && hostOf(ownBaseRaw) ? ownBaseRaw : ""; // a typo'd URL is no URL at all
-    if (ownBaseRaw && !ownBase) return { id, label: id, kind: "paid", model: "", baseUrl: ownBaseRaw, apiKey: "", configured: false };
-    const baseUrl = ownBase || String(target.JEV_BASE_URL || "").trim();
-    // The shared key belongs to the shared host: a provider may inherit it only while
-    // it stays on that same host, so the key can never travel somewhere it doesn't belong.
-    const ownKey = target[P + "KEY"] ? String(target[P + "KEY"]).trim() : "";
-    const sameHost = !ownBase || (hostOf(ownBase) !== null && hostOf(ownBase) === sharedHost);
-    const apiKey = ownKey || (sameHost ? String(target.JEV_API_KEY || "").trim() : "");
     const label = String(target[P + "LABEL"] ?? "").trim() || id; // a blank label falls back to the id
     const rawKind = String(target[P + "KIND"] || "").trim().toLowerCase();
     const kind = rawKind === "free" || rawKind === "paid" ? rawKind : /[-_]free\b/i.test(model) ? "free" : "paid";
-    return { id, label, kind, model, baseUrl, apiKey, configured: Boolean(model && baseUrl && apiKey) };
+    const ownBaseRaw = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
+    const ownBase = ownBaseRaw && hostOf(ownBaseRaw) ? ownBaseRaw : ""; // a typo'd URL is no URL at all
+    const badUrl = Boolean(ownBaseRaw) && !ownBase;
+    const baseUrl = ownBase || sharedBase;
+    // The shared key belongs to the shared origin: a provider may inherit it only while
+    // it stays on that same origin, so the key can never travel somewhere it doesn't belong.
+    const ownKey = target[P + "KEY"] ? String(target[P + "KEY"]).trim() : "";
+    const ownOrigin = ownBase ? hostOf(ownBase) : null;
+    const sameOrigin = !ownBase || (ownOrigin !== null && ownOrigin === sharedOrigin);
+    const apiKey = ownKey || (sameOrigin ? sharedKey : "");
+    return { id, label, kind, model, baseUrl, apiKey, configured: Boolean(model && baseUrl && apiKey && !badUrl), badUrl };
   });
   return { defaultId: providers[0].id, providers };
 }

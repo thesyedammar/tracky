@@ -56,19 +56,31 @@ async function loadSources(saved) {
   }
   sel.disabled = false;
   const defP = data.providers.find((p) => p.id === data.default);
-  add("", `Helper default${defP ? ` — ${defP.label}` : ""}`);
+  const defOk = !defP || defP.configured; // a default with no key must not look pickable
+  const firstOk = data.providers.find((p) => p.configured)?.id ?? "";
+  const tagOf = (p) => [p.model, p.kind, p.badUrl ? "broken address" : p.configured ? "" : "no key yet"].filter(Boolean).join(" · ");
+  // The default row is only disabled when something else can actually be picked.
+  add("", `Helper default${defP ? ` — ${defP.label}${defOk ? "" : " · no key yet"}` : ""}`, !defOk && Boolean(firstOk));
   for (const p of data.providers) {
-    const tags = [p.model, p.kind, p.configured ? "" : "no key yet"].filter(Boolean);
-    add(p.id, `${p.label} · ${tags.join(" · ")}`, !p.configured);
+    add(p.id, `${p.label} · ${tagOf(p)}`, !p.configured);
   }
+  const labelOf = (id) => data.providers.find((p) => p.id === id)?.label ?? id;
   const want = typeof saved === "string" ? saved.trim().toLowerCase() : "";
   const savedP = want ? data.providers.find((p) => p.id === want) : null;
-  sel.value = savedP?.configured ? want : "";
-  if (want && !sel.value) {
+  sel.value = savedP?.configured ? want : defOk ? "" : firstOk;
+  if (want && sel.value !== want) {
     note.textContent = savedP
-      ? `The source you picked earlier (“${savedP.label}”) has no key right now — using the helper's default instead.`
-      : `The source you picked earlier (“${want.slice(0, 40)}”) is not in JEV_PROVIDERS any more — using the helper's default instead.`;
+      ? `The source you picked earlier (“${savedP.label}”) can't be used right now — using ${sel.value ? `“${labelOf(sel.value)}”` : "the helper's default"} instead.`
+      : `The source you picked earlier (“${want.slice(0, 40)}”) is not in JEV_PROVIDERS any more — using ${sel.value ? `“${labelOf(sel.value)}”` : "the helper's default"} instead.`;
     note.className = "warn";
+    if (sel.value) await save();
+  } else if (!defOk && !savedP?.configured) {
+    // Only when the selection actually fell back: a valid explicit pick must not read as a switch.
+    note.textContent = sel.value
+      ? `The helper's default has no key — switched to “${labelOf(sel.value)}”.`
+      : "No source has a key right now — add one to server/.env.";
+    note.className = "warn";
+    if (sel.value) await save();
   } else {
     updateSourceNote(data);
   }

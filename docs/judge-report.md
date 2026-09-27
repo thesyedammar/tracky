@@ -560,3 +560,23 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Per-provider BASE_URL overrides never validated as URLs: typo stays configured:true until runtime fetch fails; validate like shared JEV_BASE_URL
   - Default implicit id=default 503 names JEV_PROVIDER_DEFAULT_KEY which does not exist; when id is default it should name shared JEV_API_KEY / JEV_MODEL / JEV_BASE_URL
   - No regression tests for the six loop-3 fixes: default-no-key 503, zen-paid vs zen_paid stem collapse, freebird boundary, loadEnv trim, normalized warn, single listener; 113/113 passes without covering them
+
+### Source picker (JEV_PROVIDERS, loop 5) — 8.3/10 🟡
+- 27 Sept 2026, 11:02 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, extension/options.js, server/test/providers.test.mjs
+- correctness **8.5** · craft **8.4** · robustness **7.9** · performance **9.1** · polish **8.2**
+- top fixes:
+  - typo'd BASE_URL is configured:false but pickProvider 503 says 'add _KEY' — misdiagnoses bad URL vs missing key, needs distinct message
+  - bad-URL early return discards custom _LABEL/_MODEL/_KIND and hardcodes kind paid/model '' — preserve user values
+  - resolveProviders does not validate/trim shared JEV_BASE_URL: invalid shared base can still be marked configured and hostOf() parses untrimmed value
+  - no port-change test for origin check — same-host/ different-host and scheme covered but different-port inheritance not proven
+  - helper-default option stays selectable even when default provider is unconfigured — disable or warn instead of allowing doomed search
+
+### Source picker (JEV_PROVIDERS, loop 6) — 8.4/10 🟡
+- 27 Sept 2026, 11:18 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js
+- correctness **8.4** · craft **8.9** · robustness **8.3** · performance **9** · polish **8.2**
+- top fixes:
+  - Expose badUrl via /api/providers and label broken-address sources distinctly instead of no key yet
+  - Fix options false-positive: explicit valid choice with broken default incorrectly shows switched to note and re-saves
+  - Distinguish missing-model and broken shared base from missing-key in pickProvider default path
+  - Handle no-usable-source case without leaving disabled Helper default selected
+  - Avoid repeated hostOf URL parsing and validate trimmed JEV_BASE_URL in loadEnv
