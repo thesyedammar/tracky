@@ -58,9 +58,10 @@ async function loadSources(saved) {
   const defP = data.providers.find((p) => p.id === data.default);
   const defOk = !defP || defP.configured; // a default with no key must not look pickable
   const firstOk = data.providers.find((p) => p.configured)?.id ?? "";
-  const tagOf = (p) => [p.model, p.kind, p.badUrl ? "broken address" : p.configured ? "" : "no key yet"].filter(Boolean).join(" · ");
+  const whyNot = (p) => (p.badUrl ? "broken address" : !p.model ? "no model set" : !p.baseUrl ? "no address" : "no key yet");
+  const tagOf = (p) => [p.model, p.kind, p.configured ? "" : whyNot(p)].filter(Boolean).join(" · ");
   // The default row is only disabled when something else can actually be picked.
-  add("", `Helper default${defP ? ` — ${defP.label}${defOk ? "" : " · no key yet"}` : ""}`, !defOk && Boolean(firstOk));
+  add("", `Helper default${defP ? ` — ${defP.label}${defOk ? "" : ` · ${whyNot(defP)}`}` : ""}`, !defOk && Boolean(firstOk));
   for (const p of data.providers) {
     add(p.id, `${p.label} · ${tagOf(p)}`, !p.configured);
   }

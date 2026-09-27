@@ -204,6 +204,54 @@ test("/api/providers exposes badUrl and still never leaks a key", async () => {
   }
 });
 
+test("a shared-less config is fine when every source carries its own values", () => {
+  const dir = mkdtempSync(join(fileURLToPath(new URL(".", import.meta.url)), ".tmp-"));
+  const f = join(dir, ".env");
+  writeFileSync(
+    f,
+    [
+      "JEV_PROVIDERS=typesafe",
+      "JEV_PROVIDER_TYPESAFE_BASE_URL=https://api.typesafe.test/v1",
+      "JEV_PROVIDER_TYPESAFE_MODEL=jev-latest",
+      "JEV_PROVIDER_TYPESAFE_KEY=tk",
+      "",
+    ].join("\n"),
+  );
+  const cfg = loadEnv({ envPath: f, target: {} });
+  assert.equal(cfg.providers[0].configured, true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a config with no usable source at all is refused, with a readable message", () => {
+  const dir = mkdtempSync(join(fileURLToPath(new URL(".", import.meta.url)), ".tmp-"));
+  const f = join(dir, ".env");
+  writeFileSync(f, "JEV_PROVIDERS=typesafe\n");
+  assert.throws(() => loadEnv({ envPath: f, target: {} }), /No usable Jev source/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the picked path names JEV_API_KEY for the implicit default source", async () => {
+  const cfg = {
+    baseUrl: "https://zen.test",
+    model: "jev-1.13",
+    apiKey: "k",
+    defaultId: "default",
+    providers: [{ id: "default", label: "default", kind: "paid", model: "jev-1.13", baseUrl: "https://zen.test", apiKey: "", configured: false, badUrl: false }],
+  };
+  const server = createHelperServer({ config: cfg, fetchImpl: answerOk, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await post(base, "/api/search", { ...onePassage, provider: "default" });
+    assert.equal(res.status, 503);
+    const msg = (await res.json()).message;
+    assert.match(msg, /JEV_API_KEY/);
+    assert.ok(!/JEV_PROVIDER_DEFAULT_KEY/.test(msg));
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 const config = {
   baseUrl: "https://zen.test",
   model: "jev-1.13",

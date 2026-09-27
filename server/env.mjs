@@ -40,8 +40,8 @@ export function resolveProviders(target = process.env) {
   ].filter((id, i, all) => all.findIndex((x) => envSuffix(x) === envSuffix(id)) === i); // two ids that share env vars are one source
   if (!ids.length) ids.push("default");
   const sharedBaseRaw = String(target.JEV_BASE_URL || "").trim();
-  const sharedBase = hostOf(sharedBaseRaw) ? sharedBaseRaw : ""; // an invalid shared base is no base at all
-  const sharedOrigin = hostOf(sharedBaseRaw);
+  const sharedOrigin = sharedBaseRaw ? hostOf(sharedBaseRaw) : null;
+  const sharedBase = sharedOrigin ? sharedBaseRaw : ""; // an invalid shared base is no base at all
   const sharedKey = String(target.JEV_API_KEY || "").trim();
   const providers = ids.map((id) => {
     const P = `JEV_PROVIDER_${envSuffix(id)}_`;
@@ -50,13 +50,13 @@ export function resolveProviders(target = process.env) {
     const rawKind = String(target[P + "KIND"] || "").trim().toLowerCase();
     const kind = rawKind === "free" || rawKind === "paid" ? rawKind : /[-_]free\b/i.test(model) ? "free" : "paid";
     const ownBaseRaw = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
-    const ownBase = ownBaseRaw && hostOf(ownBaseRaw) ? ownBaseRaw : ""; // a typo'd URL is no URL at all
-    const badUrl = Boolean(ownBaseRaw) && !ownBase;
+    const ownOrigin = ownBaseRaw ? hostOf(ownBaseRaw) : null;
+    const ownBase = ownOrigin ? ownBaseRaw : ""; // a typo'd URL is no URL at all
+    const badUrl = Boolean(ownBaseRaw) && !ownOrigin;
     const baseUrl = ownBase || sharedBase;
     // The shared key belongs to the shared origin: a provider may inherit it only while
     // it stays on that same origin, so the key can never travel somewhere it doesn't belong.
     const ownKey = target[P + "KEY"] ? String(target[P + "KEY"]).trim() : "";
-    const ownOrigin = ownBase ? hostOf(ownBase) : null;
     const sameOrigin = !ownBase || (ownOrigin !== null && ownOrigin === sharedOrigin);
     const apiKey = ownKey || (sameOrigin ? sharedKey : "");
     return { id, label, kind, model, baseUrl, apiKey, configured: Boolean(model && baseUrl && apiKey && !badUrl), badUrl };
@@ -76,20 +76,29 @@ export function loadEnv({ envPath = DEFAULT_ENV_PATH, target = process.env } = {
       if (target[k] === undefined) target[k] = v;
     }
   }
+  const hasProviders = typeof target.JEV_PROVIDERS === "string" && target.JEV_PROVIDERS.trim() !== "";
   const missing = REQUIRED.filter((k) => typeof target[k] !== "string" || target[k].trim() === "");
-  if (missing.length) {
+  if (!hasProviders && missing.length) {
     throw new Error(`Missing ${missing.join(", ")} — put them in ${envPath} (copy .env.example) or export them.`);
   }
-  try {
-    new URL(target.JEV_BASE_URL);
-  } catch {
-    throw new Error(`JEV_BASE_URL is not a valid URL: "${String(target.JEV_BASE_URL).slice(0, 60)}"`);
+  if (String(target.JEV_BASE_URL ?? "").trim()) {
+    try {
+      new URL(String(target.JEV_BASE_URL).trim());
+    } catch {
+      throw new Error(`JEV_BASE_URL is not a valid URL: "${String(target.JEV_BASE_URL).slice(0, 60)}"`);
+    }
   }
   const { defaultId, providers } = resolveProviders(target);
+  if (!providers.some((p) => p.configured)) {
+    // Every source may carry its own values — but at least one has to be usable.
+    throw new Error(
+      `No usable Jev source — add JEV_API_KEY / JEV_MODEL / JEV_BASE_URL (or per-source JEV_PROVIDER_<ID>_* values) to ${envPath} (copy .env.example) or export them.`,
+    );
+  }
   return {
-    baseUrl: String(target.JEV_BASE_URL).trim(),
-    model: String(target.JEV_MODEL).trim(),
-    apiKey: String(target.JEV_API_KEY).trim(),
+    baseUrl: String(target.JEV_BASE_URL ?? "").trim(),
+    model: String(target.JEV_MODEL ?? "").trim(),
+    apiKey: String(target.JEV_API_KEY ?? "").trim(),
     defaultId,
     providers,
   };

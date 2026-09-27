@@ -580,3 +580,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Distinguish missing-model and broken shared base from missing-key in pickProvider default path
   - Handle no-usable-source case without leaving disabled Helper default selected
   - Avoid repeated hostOf URL parsing and validate trimmed JEV_BASE_URL in loadEnv
+
+### Source picker (JEV_PROVIDERS, loop 7) — 8.3/10 🟡
+- 27 Sept 2026, 11:22 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js
+- correctness **8.2** · craft **8.7** · robustness **8.3** · performance **9** · polish **8.1**
+- top fixes:
+  - Explicit provider path collapses missing-model/missing-base into 'no key yet' and names JEV_PROVIDER_DEFAULT_KEY for id=default instead of JEV_API_KEY
+  - Helper-default dropdown row and fallback note always say 'no key yet' even when default is badUrl/missing-model/broken-shared-base; should say 'broken address' like tagOf does
+  - hostOf still called twice for shared base and twice per ownBase (ownBase check + ownOrigin) despite once-per-provider claim — cache parsed origin
+  - loadEnv REQUIRES shared JEV_BASE_URL/MODEL/KEY even when every provider supplies its own values, blocking valid shared-less configs
+  - tagOf shows 'no key yet' for missing-model/missing-base cases, conflating distinct failures in the dropdown label

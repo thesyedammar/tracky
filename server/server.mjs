@@ -156,7 +156,13 @@ function pickProvider(config, wanted) {
         503,
       );
     }
-    const envName = `JEV_PROVIDER_${envSuffix(id)}_KEY`;
+    if (!p.model) {
+      throw new SearchError(`The source "${id}" has no model — add JEV_PROVIDER_${envSuffix(id)}_MODEL (or JEV_MODEL) to server/.env.`, 503);
+    }
+    if (!p.baseUrl) {
+      throw new SearchError(`The source "${id}" has no usable address — add JEV_PROVIDER_${envSuffix(id)}_BASE_URL (or a valid JEV_BASE_URL) to server/.env.`, 503);
+    }
+    const envName = id === "default" ? "JEV_API_KEY" : `JEV_PROVIDER_${envSuffix(id)}_KEY`;
     throw new SearchError(`The source "${id}" has no key yet — add ${envName} to server/.env and restart the helper.`, 503);
   }
   return { id: p.id, baseUrl: p.baseUrl, model: p.model, apiKey: p.apiKey };
