@@ -6,7 +6,7 @@
 
 ## The 60-second tour
 
-1. Start the helper: `node server/server.mjs` (it holds your key in `server/.env`).
+1. Start the helper: `node server/server.mjs` — or just **double-click `start-tracky.bat`** (Windows) / **run `./start-tracky.sh`** (mac, Linux). It holds your key in `server/.env`.
 2. Load the extension: `chrome://extensions` → *Developer mode* → *Load unpacked* → pick `extension/`.
 3. Open any long page, press **Alt+K** (or **Ctrl+F**), type what you mean, press Enter.
 4. The best sentence is quoted in the panel; click it and it scrolls to and glows on the page itself.
