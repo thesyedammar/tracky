@@ -340,6 +340,40 @@ def main() -> int:
                 f"{mem['allocated']} of {mem['canvases']} canvases allocated (~{mem['mb']} MB); first page freed: {mem['firstFreed']}",
             )
 
+            # The reader must never show a blank page: scroll away from page 1 (which
+            # frees its buffer), then come back to it and the canvas must repaint.
+            page.evaluate(
+                """() => {
+                    const wraps = document.querySelectorAll('#pages .page');
+                    wraps[wraps.length - 1]?.scrollIntoView({ block: 'end' });
+                }"""
+            )
+            page.wait_for_timeout(1500)
+            page.evaluate("() => { document.querySelectorAll('#pages .page')[0]?.scrollIntoView({ block: 'start' }); }")
+            page.wait_for_timeout(2500)
+            back = page.evaluate(
+                """() => {
+                    const wraps = [...document.querySelectorAll('#pages .page')];
+                    const mid = window.innerHeight / 2;
+                    let inView = null;
+                    for (const w of wraps) {
+                        const r = w.getBoundingClientRect();
+                        if (r.top <= mid && r.bottom >= mid) { inView = w; break; }
+                    }
+                    const c = inView?.querySelector('canvas');
+                    return {
+                        page: inView ? Number(inView.dataset.page) : null,
+                        painted: !!(c && c.width > 0 && c.height > 0),
+                        paintError: inView?.dataset.paintError ?? '',
+                    };
+                }"""
+            )
+            check(
+                "the page you come back to repaints",
+                back["painted"],
+                f"page {back['page']} in view · painted={back['painted']} · error={back['paintError'][:60] or 'none'}",
+            )
+
             # ---- second document: a two-column paper (the layout that breaks naive
             # PDF readers — columns must not be interleaved into one block) --------
             twocol = EXT / "tests" / "twocol.pdf"

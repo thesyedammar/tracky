@@ -181,7 +181,26 @@ def main() -> int:
                         """() => { const r = document.getElementById('tracky-root').shadowRoot;
                             r.querySelector('.hit .jump')?.click(); }"""
                     )
-                    time.sleep(3.0)
+                    # Hold on the result — and never end the take on a page whose canvas is
+                    # still repainting (a lazy reader can show a blank page for a moment).
+                    for _ in range(20):
+                        painted = pdf_tab.evaluate(
+                            """() => {
+                                const mid = window.innerHeight / 2;
+                                for (const w of document.querySelectorAll('#pages .page')) {
+                                    const r = w.getBoundingClientRect();
+                                    if (r.top <= mid && r.bottom >= mid) {
+                                        const c = w.querySelector('canvas');
+                                        return !!(c && c.width > 0 && c.height > 0);
+                                    }
+                                }
+                                return false;
+                            }"""
+                        )
+                        if painted:
+                            break
+                        time.sleep(0.5)
+                    time.sleep(4.5)  # let the quote and the highlight be read
         finally:
             ctx.close()
 
