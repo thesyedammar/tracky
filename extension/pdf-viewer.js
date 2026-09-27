@@ -89,6 +89,10 @@ async function buildPage(doc, n, targetWidth) {
     viewport,
   });
   await textLayer.render();
+  // The text layer is what this reader needs; the page's parsed operators are not, and
+  // a 300-page document must not hold all of them. free() calls cleanup() too, and
+  // paint() re-fetches the page if it needs one again.
+  let livePage = page;
 
   const paint = async () => {
     if (canvas.dataset.pending !== "1" || canvas.dataset.rendering === "1") return;
@@ -102,7 +106,8 @@ async function buildPage(doc, n, targetWidth) {
         canvas.width = w;
         canvas.height = h;
       }
-      await page.render({
+      if (!livePage) livePage = await doc.getPage(n); // cleaned up earlier: fetch again
+      await livePage.render({
         canvasContext: canvas.getContext("2d", { alpha: false }),
         viewport,
         transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined,
@@ -122,6 +127,19 @@ async function buildPage(doc, n, targetWidth) {
     canvas.dataset.pending = "1";
     canvas.width = 0; // release the pixel buffer, keep the layout box
     canvas.height = 0;
+    // And hand the page's parsed operators back to pdf.js: a far-away page needs its
+    // text layer (kept in the DOM) but not its render resources. paint() re-fetches.
+    if (livePage?.cleanup) {
+      const p = livePage;
+      livePage = null;
+      try {
+        // pdf.js returns undefined here in this build — never assume a promise.
+        const maybe = p.cleanup();
+        if (maybe && typeof maybe.catch === "function") maybe.catch(() => {});
+      } catch {
+        /* a cleanup failure is never a page failure */
+      }
+    }
     return true;
   };
   return { wrap, paint, free };
@@ -217,7 +235,11 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
   const items = spans.map((span) => {
     const sl = num(span.style.left);
     const st = num(span.style.top);
-    const rect = sl === null || st === null ? span.getBoundingClientRect() : null;
+    // One measured read per span, in a single synchronous pass with no writes in
+    // between: the layout flushes once for the page, not once per span. A measured
+    // width is what keeps run-splitting correct on condensed or expanded fonts, where
+    // an estimate would merge columns or split words.
+    const rect = span.getBoundingClientRect();
     const size = num(span.style.fontSize) ?? 12;
     return {
       span,
@@ -226,7 +248,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
       top: st ?? rect.top - layerRect.top,
       left: sl ?? rect.left - layerRect.left,
       size,
-      w: span.firstChild.data.length * size * 0.5, // estimate, used for run splitting only
+      w: rect.width || span.firstChild.data.length * size * 0.5,
     };
   });
   const sizes = items.map((i) => i.size).sort((a, b) => a - b);
@@ -338,8 +360,8 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
     if (trimmed.length >= MIN_BLOCK_CHARS) {
       // The document cap is applied here, before anything is registered — a block that
       // will not be kept must not leave an entry in byId either.
-      if (room.blocks <= 0 || room.chars <= 0) {
-        skipped.capped++;
+      if (room.blocks <= 0 || room.chars <= 0 || trimmed.length > room.chars) {
+        skipped.capped++; // never overrun the char budget by one block
       } else {
         const key = trimmed.replace(/\s+/g, " ").toLowerCase(); // full text: no truncation collisions
         if (!seen.has(key)) {
@@ -382,7 +404,7 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
       // De-hyphenate a *line break* only: the first item of a visual line is where a
       // word may have been split. Inside a line, "well-known" keeps its hyphen.
       const isLineStart = it === ln.items[0];
-      const prevEndsHyphen = isLineStart && text.endsWith("-") && /^\p{L}/u.test(it.data);
+      const prevEndsHyphen = isLineStart && /\p{L}-$/u.test(text) && /^\p{L}/u.test(it.data);
       let start;
       if (!text.length) {
         start = 0;
@@ -459,12 +481,12 @@ async function main() {
   let chars = 0;
 
   for (let n = 1; n <= doc.numPages; n++) {
+    let timer = 0; // declared outside the try so the catch can always clear it
     try {
       // A page that never finishes rendering must not stall the document — and a page
       // that finishes *after* its deadline is cleaned up instead of being left in the
       // DOM as an orphan nobody tracks.
       const built = buildPage(doc, n, width);
-      let timer = 0;
       const entry = await Promise.race([
         built,
         new Promise((_, reject) => {
@@ -496,8 +518,10 @@ async function main() {
         skipped.cappedPages++; // the cap was reached earlier: this page's text is dropped
       }
     } catch (err) {
-      // One unreadable page must not cost the whole document: note it and go on.
+      // One unreadable page must not cost the whole document: note it and go on — and
+      // take its deadline with it (a rejecting page must not leave a dangling timer).
       skipped.pageErrors++;
+      clearTimeout(timer);
     }
     // Yield so the progress bar paints on long documents.
     await new Promise((r) => requestAnimationFrame(r));

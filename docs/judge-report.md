@@ -480,3 +480,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - titles lists all picked tabs even when merge discards a whole tab on char/passage ceiling, mismatching passages count
   - CHAR ceiling sums text.length only, ignoring JSON/id overhead, can still overshoot helper payload limit
   - always reporting skipped.current as Skipped: 1 (this tab) adds noise to successful searches
+
+### Phase 13 — PDF mode (loop 11) — 9/10 🟢
+- 27 Sept 2026, 5:34 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **8.8** · craft **9.2** · robustness **8.7** · performance **9** · polish **9.1**
+- top fixes:
+  - Clear the 10s timer on the failure path too — timer is block-scoped and only cleared after a successful race, so a rejecting page leaks a dangling timeout
+  - Enforce MAX_CHARS without one-block overrun — check text.length against room.chars instead of only room.chars<=0
+  - Tighten de-hyphenation to /\p{L}-$/ so a spaced dash at a line break does not lose its dash
+  - Replace estimated run width (len*size*0.5) for gap detection with measured edges or bound the error — condensed/expanded fonts can merge columns or split words
+  - Release pdf.js page resources after text-layer build (page.cleanup) instead of retaining every page object in paint/free closures for 300-page docs

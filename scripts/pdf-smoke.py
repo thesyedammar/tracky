@@ -314,8 +314,16 @@ def main() -> int:
             page.screenshot(path=str(OUT / "tracky-pdf.png"))
             check("no page JS errors", not errors, "; ".join(errors[:3])[:200])
 
-            # The lazy-memory claim, measured: only pages near the reader may hold a
-            # pixel buffer — a 15-page document must not allocate 15 canvases.
+            # The lazy-memory claim, measured at the *end* of the document: scroll all
+            # the way down, and the pages left behind must have given their buffers back.
+            page.evaluate(
+                """() => {
+                    const wraps = document.querySelectorAll('#pages .page');
+                    const last = wraps[wraps.length - 1];
+                    if (last) last.scrollIntoView({ block: 'end' });
+                }"""
+            )
+            page.wait_for_timeout(2500)
             mem = page.evaluate(
                 """() => {
                     const cs = [...document.querySelectorAll('canvas')];
@@ -323,13 +331,13 @@ def main() -> int:
                     for (const c of cs) {
                         if (c.width > 0 && c.height > 0) { allocated++; total += c.width * c.height; }
                     }
-                    return { canvases: cs.length, allocated, mb: Math.round((total * 4) / 1048576) };
+                    return { canvases: cs.length, allocated, mb: Math.round((total * 4) / 1048576), firstFreed: cs[0] ? cs[0].width === 0 && cs[0].height === 0 : false };
                 }"""
             )
             check(
-                "only pages near the reader hold pixel buffers",
-                mem["allocated"] <= 4,
-                f"{mem['allocated']} of {mem['canvases']} canvases allocated (~{mem['mb']} MB)",
+                "pages left behind give their pixel buffers back",
+                mem["firstFreed"] and mem["allocated"] < mem["canvases"] and mem["allocated"] <= 8,
+                f"{mem['allocated']} of {mem['canvases']} canvases allocated (~{mem['mb']} MB); first page freed: {mem['firstFreed']}",
             )
 
             # ---- second document: a two-column paper (the layout that breaks naive
