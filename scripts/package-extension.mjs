@@ -26,6 +26,7 @@ const ALLOW = [
   "background.js",
   "content.js",
   "collect.js",
+  "direct.js",
   "options.html",
   "options.js",
   "shared.js",
@@ -144,9 +145,12 @@ if (!manifest.background?.service_worker) problems.push("manifest has no backgro
 if (!manifest.icons?.["128"]) problems.push("manifest has no 128px icon");
 if (!manifest.options_ui?.page) problems.push("manifest has no options_ui.page");
 
-// The service worker must load shared.js the same way it does at runtime.
+// The service worker must load shared.js the same way it does at runtime (and, since
+// direct mode, the engine it runs searches with).
 const bg = readFileSync(join(EXT, "background.js"), "utf8");
-if (!/importScripts\("shared\.js"\)/.test(bg)) problems.push("background.js does not importScripts('shared.js')");
+for (const dep of ["shared.js", "direct.js"]) {
+  if (!new RegExp(`importScripts\\([^)]*"${dep.replace(".", "\\.")}"`).test(bg)) problems.push(`background.js does not importScripts('${dep}')`);
+}
 
 // Every allowed file must exist, and every JS file must parse.
 const files = [];

@@ -303,7 +303,12 @@
       const reply = await send({ type: "tracky:health" });
       if (seq !== pingSeq) return; // superseded by a newer ping
       const h = reply?.health;
-      if (reply?.ok && typeof h?.version === "string" && typeof h?.model === "string") {
+      if (reply?.ok && h?.direct) {
+        // Direct mode has no helper: say what it is actually running on, and which of
+        // the two things it still needs (a key, the origin permission) is missing.
+        const why = !h.key ? "paste your key in Tracky's options" : "allow access to opencode.ai in Tracky's options";
+        setStatus(h.ready ? "ok" : "bad", h.ready ? `direct · ${h.model} · ready` : `direct mode — ${why}`);
+      } else if (reply?.ok && typeof h?.version === "string" && typeof h?.model === "string") {
         setStatus("ok", `helper ${h.version} · ${h.model} · ready`);
       } else {
         setStatus("bad", HELP_FIX);

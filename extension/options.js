@@ -1,13 +1,39 @@
 // Tracky — options page logic. Reads/writes chrome.storage.local only; the
-// helper is contacted solely for a health check. No page text ever passes here.
+// helper is contacted solely for a health check (never in direct mode, where the
+// extension talks to Jev itself with the key the user pasted here).
 
-const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false, autoJump: true, source: null };
+const DEFAULTS = {
+  hijackCtrlF: true,
+  disabledHosts: [],
+  countSearches: true,
+  crossTab: false,
+  autoJump: true,
+  source: null,
+  mode: "helper", // "helper" (default) | "direct"
+  directKey: "",
+  directSource: "",
+};
 const HELPER = "http://127.0.0.1:4199";
+/** direct.js loads before this file (options.html). If it ever fails to load, the page
+ *  must still open — it is the only place a broken install can be fixed — so every use
+ *  is guarded and says what is wrong instead of throwing on the first line. */
+const DIRECT = globalThis.TrackyDirect ?? null;
+const DIRECT_ORIGINS = DIRECT ? [...new Set(DIRECT.ROUTES.map((r) => r.origin))] : [];
 
 const $ = (id) => document.getElementById(id);
+/** Say something where the user can see it. #dtest-note lives inside the Direct panel,
+ *  which is hidden the moment the mode reverts to helper — this line is always visible. */
+function setNote(kind, text) {
+  const el = $("mode-note");
+  el.hidden = false;
+  el.className = kind === "warn" ? "warn" : "muted";
+  el.textContent = text;
+}
 const savedTag = $("saved");
 let savedTimer = null;
 let sourcesData = null; // the latest /api/providers payload, for the change listener
+
+const isDirect = () => $("mode-direct").checked;
 
 function flashSaved() {
   savedTag.classList.add("on");
@@ -23,15 +49,80 @@ async function load() {
   $("cross").checked = opts.crossTab === true;
   $("autojump").checked = opts.autoJump !== false;
   $("hosts").value = Array.isArray(opts.disabledHosts) ? opts.disabledHosts.join("\n") : "";
+  const wantsDirect = opts.mode === "direct";
+  $("mode-direct").checked = wantsDirect && Boolean(DIRECT);
+  $("mode-helper").checked = !(wantsDirect && Boolean(DIRECT));
+  if (wantsDirect && !DIRECT) {
+    // The mode is on but its engine never loaded: fall back to the helper and say why.
+    setNote("warn", "Direct is selected but direct.js did not load — reinstall Tracky. Using the local helper for now.");
+  }
+  $("dkey").value = typeof opts.directKey === "string" ? opts.directKey : "";
+  renderRoutes(opts.directSource);
   renderSpend(v.trackySpend);
+  applyMode();
   await loadSources(opts.source ?? null);
 }
 
+/** The route list a direct-mode user picks from — the same two the helper ships
+ *  with in server/.env, declared in direct.js so both modes name models identically. */
+function renderRoutes(saved) {
+  const sel = $("dsource");
+  sel.textContent = "";
+  if (!DIRECT) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "direct.js did not load — reinstall Tracky";
+    sel.appendChild(o);
+    sel.disabled = true;
+    return;
+  }
+  for (const r of DIRECT.ROUTES) {
+    const o = document.createElement("option");
+    o.value = r.id;
+    o.textContent = `${r.label} · ${r.model}`;
+    sel.appendChild(o);
+  }
+  sel.value = DIRECT.ROUTES.some((r) => r.id === saved) ? saved : DIRECT.ROUTES[0].id;
+}
+
+/** Visibility + the honest copy for whichever mode is selected. */
+function applyMode() {
+  const direct = isDirect();
+  $("direct").hidden = !direct;
+  $("helper-note").textContent = direct
+    ? "Not used in direct mode — a search goes straight from this extension to the route above. Nothing talks to 127.0.0.1, and no helper has to be running."
+    : "If it says the helper is down, start it with node server/server.mjs. Page text goes only to this local helper on 127.0.0.1 — it is never uploaded anywhere else, and the helper logs counts, never text.";
+}
+
+/** Direct mode fetches Jev from this extension, so Chrome must grant that origin —
+ *  and only a real click can ask. Already granted → true, no prompt. */
+async function ensureOriginPermission() {
+  try {
+    if (await chrome.permissions.contains({ origins: DIRECT_ORIGINS })) return true;
+    return await chrome.permissions.request({ origins: DIRECT_ORIGINS });
+  } catch {
+    return false; // no permissions API answer → the caller says what it means
+  }
+}
+
 /** Populate the source dropdown from the helper's /api/providers (labels only,
- *  never keys). Offline → one honest option and a note that says to start it. */
+ *  never keys). Offline → one honest option and a note that says to start it.
+ *  Direct mode → the helper is not involved at all, so the list says so. */
 async function loadSources(saved) {
   const sel = $("source");
   const note = $("source-note");
+  if (isDirect()) {
+    sel.textContent = "";
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "not used in direct mode";
+    sel.appendChild(o);
+    sel.disabled = true;
+    note.textContent = "Direct mode uses the route under Connect — the helper's sources (server/.env) are not involved.";
+    note.className = "muted";
+    sourcesData = null; // the listener must not read a stale helper list
+    return;
+  }
   let data = null;
   try {
     const res = await fetch(`${HELPER}/api/providers`, { signal: AbortSignal.timeout(2500) });
@@ -135,6 +226,9 @@ async function save() {
     autoJump: $("autojump").checked,
     disabledHosts: hosts,
     source: sel.disabled ? stored : sel.value || null,
+    mode: isDirect() ? "direct" : "helper",
+    directKey: $("dkey").value.trim(),
+    directSource: $("dsource").value || DIRECT?.ROUTES[0].id || "",
   };
   await chrome.storage.local.set({ trackyOpts: opts });
   flashSaved();
@@ -184,6 +278,28 @@ async function pingHelper() {
   const dot = $("hdot");
   const text = $("htext");
   dot.className = "dot";
+  if (isDirect()) {
+    // No helper to ping: say what the mode is, and which of the two things a search would
+    // still need — a key, or Chrome's permission for the route's origin (same contract as
+    // the in-page panel, so the two never disagree).
+    if (!$("dkey").value.trim()) {
+      text.textContent = "direct — paste your Jev key in Connect";
+      return;
+    }
+    let granted = true;
+    try {
+      granted = !DIRECT_ORIGINS.length || (await chrome.permissions.contains({ origins: DIRECT_ORIGINS }));
+    } catch {
+      /* no answer from the permissions API → do not invent a problem */
+    }
+    if (!granted) {
+      dot.className = "dot bad";
+      text.textContent = "direct — allow access to opencode.ai in Connect";
+      return;
+    }
+    text.textContent = "direct — no helper needed";
+    return;
+  }
   text.textContent = "checking…";
   try {
     const res = await fetch(`${HELPER}/api/health`, { signal: AbortSignal.timeout(2500) });
@@ -207,6 +323,76 @@ $("reset").addEventListener("click", async () => {
   flashSaved();
 });
 
-load();
-pingHelper();
+/** Switching modes re-renders everything that depends on it, and asks for the one
+ *  permission direct mode needs — from this click, the only moment Chrome allows it. */
+async function onModeChange() {
+  const note = $("dtest-note");
+  $("mode-note").hidden = true; // a fresh choice starts with a clean slate
+  if (isDirect() && !(await ensureOriginPermission())) {
+    $("mode-helper").checked = true; // a refused switch is not a switch
+    note.textContent = "Permission declined — direct mode needs access to opencode.ai to reach Jev.";
+    note.className = "warn";
+    // The revert hides the Direct panel, so say it once where it stays visible.
+    setNote("warn", "Direct needs permission for opencode.ai — click Direct again and accept the prompt.");
+  } else if (isDirect()) {
+    note.textContent = $("dkey").value.trim()
+      ? "One tiny real call proves the key before you search."
+      : "Paste your key above, then press Test — one tiny real call proves it.";
+    note.className = "muted";
+  }
+  applyMode();
+  await save();
+  const v = await chrome.storage.local.get({ trackyOpts: null });
+  await loadSources(v?.trackyOpts?.source ?? null); // re-render as helper list / "not used"
+  pingHelper();
+}
+
+/** The one credential path in the whole extension: pasted here, stored in this
+ *  browser's storage, sent only to the route the user picked. */
+$("dtest").addEventListener("click", async () => {
+  const note = $("dtest-note");
+  const key = $("dkey").value.trim();
+  if (!key) {
+    note.textContent = "Paste your key first — there is nothing to test yet.";
+    note.className = "warn";
+    return;
+  }
+  if (!(await ensureOriginPermission())) {
+    note.textContent = "Permission declined — direct mode needs access to opencode.ai to reach Jev.";
+    note.className = "warn";
+    // The same condition the mode switch reports — say it on the always-visible line too,
+    // so one wording covers both places a user can meet it.
+    setNote("warn", "Direct needs permission for opencode.ai — click Direct again and accept the prompt.");
+    return;
+  }
+  note.textContent = "testing the key — one small call…";
+  note.className = "muted";
+  try {
+    if (!DIRECT) {
+      note.textContent = "direct.js did not load — reinstall Tracky, then try again.";
+      note.className = "warn";
+      return;
+    }
+    const out = await DIRECT.testKey({ config: DIRECT.configFrom({ key, sourceId: $("dsource").value }) });
+    note.textContent = `✓ ${out.model} answered in ${out.ms} ms — the key works.`;
+    note.className = "ok";
+    await save(); // a key that just answered is a key worth keeping
+  } catch (e) {
+    note.textContent = `✗ ${e?.message ?? e}`;
+    note.className = "warn";
+  }
+});
+
+$("mode-helper").addEventListener("change", onModeChange);
+$("mode-direct").addEventListener("change", onModeChange);
+$("dkey").addEventListener("change", async () => {
+  await save();
+  pingHelper(); // the status line says whether a key is saved
+});
+$("dsource").addEventListener("change", save);
+
+// The first ping must wait for load() to restore the saved mode — a ping that runs
+// before the storage read would print the helper's line even when the page is about to
+// show direct mode, and it would sit there until the 15s tick (caught live, in a shot).
+load().finally(pingHelper);
 setInterval(pingHelper, 15000); // keep the status honest while the page is open

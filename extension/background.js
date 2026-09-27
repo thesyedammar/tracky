@@ -1,14 +1,16 @@
 // Tracky — background service worker.
 //
-// The only component that talks to the local helper. The page never reaches the
-// helper directly, and the helper's key never leaves the server: the extension
-// holds no credentials at all. Icon click (or Alt+K) injects the panel; the
-// panel's messages are relayed here.
+// The only component that talks to the helper — or, in direct mode, the only place
+// that calls Jev from the browser (the key lives in chrome.storage.local and rides in
+// the Authorization header of requests this worker makes; it is never logged). In
+// helper mode the page never reaches the helper directly and the extension holds no
+// credentials at all. Icon click (or Alt+K) injects the panel; the panel's messages
+// are relayed here.
 
 const HELPER = "http://127.0.0.1:4199";
 const DEFAULT_TITLE = "Tracky — search this page by meaning (Alt+K)";
 
-importScripts("shared.js"); // hostMatches / hostDenied — one definition, unit-tested via the SW
+importScripts("shared.js", "direct.js"); // hostMatches / hostDenied + the direct-mode engine
 
 /** Pages where scripting is impossible or pointless (file:// needs an opt-in Chrome never grants here). */
 const UNSUPPORTED = /^(chrome|edge|about|devtools|chrome-extension|moz-extension|view-source|file):/i;
@@ -205,8 +207,30 @@ chrome.action.onClicked.addListener((tab) => {
   openPanel(tab);
 });
 
-/** Ask the helper how it is doing. Times out fast so the panel stays honest. */
+/** Ask the helper how it is doing. Times out fast so the panel stays honest.
+ *  In direct mode there is no helper to ask: report the mode, the route and whether
+ *  a key is saved, so the panel can say "direct · jev-1.13 · ready" or tell the user
+ *  to paste one. */
 async function checkHealth() {
+  const opts = await readOpts();
+  if (opts.mode === "direct") {
+    const cfg = TrackyDirect.configFrom({ key: opts.directKey, sourceId: opts.directSource });
+    let permit = false;
+    try {
+      permit = await chrome.permissions.contains({ origins: [cfg.origin] });
+    } catch {
+      /* no answer → not permitted, and the panel says which of the two is missing */
+    }
+    return {
+      name: "tracky-direct",
+      version: chrome.runtime.getManifest().version,
+      model: cfg.model,
+      direct: true,
+      key: Boolean(cfg.apiKey), // a key is saved
+      permit, // and the origin is allowed
+      ready: Boolean(cfg.apiKey) && permit,
+    };
+  }
   const res = await fetch(`${HELPER}/api/health`, { signal: AbortSignal.timeout(2500) });
   if (!res.ok) throw new Error(`helper replied ${res.status}`);
   const body = await res.json();
@@ -224,8 +248,70 @@ async function chosenSource() {
   return typeof s === "string" && s ? s : null;
 }
 
-/** Relay a search to the helper. The page text goes page → here → helper, nothing else. */
+/** The whole options object (mode, key, source, deny list…). Never throws: storage
+ *  trouble must not break a search. */
+async function readOpts() {
+  try {
+    return (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** One wording for "the origin permission is missing", used by both the pre-flight
+ *  check and the mid-search explanation below — two phrasings for one condition is
+ *  how users end up unsure whether they are seeing the same problem. */
+const permissionMessage = (cfg) =>
+  `Direct mode needs permission for ${cfg.origin.replace(/^[a-z]+:\/\//i, "").replace(/\/\*$/, "")} — open Tracky's options and pick Direct again.`;
+
+/** Direct mode: OUR port of the engine (direct.js) plus the key the user pasted.
+ *  Two things can stop it before any request — no key, and no host permission —
+ *  and both say exactly which one it is (a direct search never reports anything
+ *  as "unreachable": there is no helper involved to be down). */
+async function directConfig(opts) {
+  const cfg = TrackyDirect.configFrom({ key: opts.directKey, sourceId: opts.directSource });
+  // Every direct failure carries a status so the panel and the suites can act on it
+  // instead of parsing prose: 400 no key, 403 no permission (both pre-flight).
+  if (!cfg.apiKey) throw Object.assign(new Error(TrackyDirect.NO_KEY), { status: 400 });
+  let granted = false;
+  try {
+    granted = await chrome.permissions.contains({ origins: [cfg.origin] });
+  } catch {
+    /* no answer from the permissions API → treat it as not granted and say so */
+  }
+  if (!granted) throw Object.assign(new Error(permissionMessage(cfg)), { status: 403 });
+  return cfg;
+}
+
+/** A failed direct search has two honest explanations — the connection (or a slow route),
+ *  or a host permission revoked after the mode was switched on. Every network-shaped
+ *  failure is a 502; for those, ask Chrome which story is true instead of blaming the
+ *  user's internet. Anything else (no key, bad key, quota) already says what it is. */
+async function explainDirectFailure(e, opts) {
+  if (e?.status !== 502) return e;
+  try {
+    const cfg = TrackyDirect.configFrom({ key: opts.directKey, sourceId: opts.directSource });
+    const granted = await chrome.permissions.contains({ origins: [cfg.origin] });
+    if (!granted) return Object.assign(new Error(permissionMessage(cfg)), { status: 403 });
+  } catch {
+    /* no useful answer — keep the original message */
+  }
+  return e;
+}
+
+/** Run a search. Helper mode relays it to 127.0.0.1:4199; direct mode runs our own
+ *  port (direct.js) in this worker. Either way the panel gets the same shape back. */
 async function runSearch({ query, passages }) {
+  const opts = await readOpts();
+  if (opts.mode === "direct") {
+    // A direct failure is our failure: throw it without the helperDown flag, so the
+    // panel shows the message instead of "start your helper".
+    try {
+      return await TrackyDirect.searchText({ query, passages }, { config: await directConfig(opts) });
+    } catch (e) {
+      throw await explainDirectFailure(e, opts);
+    }
+  }
   const source = await chosenSource();
   let res;
   try {
@@ -248,14 +334,24 @@ async function runSearch({ query, passages }) {
       /* not JSON — keep the status line */
     }
     const e = new Error(message);
+    e.status = res.status; // 429 = a quota window: BLOCKED, never a product failure
     e.helperDown = false; // any structured HTTP answer means the helper is running
     throw e;
   }
   return res.json(); // { results, stats }
 }
 
-/** Relay a why-chips pass to the helper. Same path as search: page text goes page → here → helper. */
+/** Relay a why-chips pass to the helper — or run it in direct mode. Same path as
+ *  search: the panel's sentences go page → here → (helper | Jev), nothing else. */
 async function runWhy({ query, matches }) {
+  const opts = await readOpts();
+  if (opts.mode === "direct") {
+    try {
+      return await TrackyDirect.whyFor({ query, matches }, { config: await directConfig(opts) });
+    } catch (e) {
+      throw await explainDirectFailure(e, opts);
+    }
+  }
   const source = await chosenSource();
   let res;
   try {
@@ -278,6 +374,7 @@ async function runWhy({ query, matches }) {
       /* not JSON — keep the status line */
     }
     const e = new Error(message);
+    e.status = res.status; // a quota window stays a quota window on this path too
     e.helperDown = false;
     throw e;
   }
@@ -525,7 +622,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "tracky:health") {
     checkHealth().then(
       (health) => sendResponse({ ok: true, health }),
-      (err) => sendResponse({ ok: false, error: err?.message ?? "unreachable" }),
+      (err) => sendResponse({ ok: false, error: err?.message ?? "unreachable", status: err?.status ?? null }),
     );
     return true; // async reply
   }
@@ -534,7 +631,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const run = msg.crossTab && tabId != null ? searchWithTabs({ query: msg.query, passages: msg.passages, currentTabId: tabId }) : runSearch(msg);
     run.then(
       (out) => sendResponse({ ok: true, ...out }),
-      (err) => sendResponse({ ok: false, error: err?.message ?? "search failed", helperDown: !!err?.helperDown }),
+      (err) => sendResponse({ ok: false, error: err?.message ?? "search failed", status: err?.status ?? null, helperDown: !!err?.helperDown }),
     );
     return true; // async reply
   }
@@ -545,7 +642,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "tracky:why") {
     runWhy(msg).then(
       (out) => sendResponse({ ok: true, ...out }),
-      (err) => sendResponse({ ok: false, error: err?.message ?? "why failed", helperDown: !!err?.helperDown }),
+      (err) => sendResponse({ ok: false, error: err?.message ?? "why failed", status: err?.status ?? null, helperDown: !!err?.helperDown }),
     );
     return true; // async reply
   }

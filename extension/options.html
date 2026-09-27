@@ -43,6 +43,15 @@
   code { background: rgba(255, 255, 255, .07); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, monospace; }
   select { background: #171A21; color: #E8ECF3; border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; flex: 1; min-width: 0; }
   select:disabled { opacity: .6; }
+  input[type="password"], input[type="text"] {
+    background: rgba(255, 255, 255, .05); color: #E9EDF5; border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 9px; padding: 8px 10px; font: 13px ui-monospace, monospace; flex: 1; min-width: 0;
+  }
+  input[type="radio"] { width: 15px; height: 15px; accent-color: #F5C453; flex: none; }
+  #direct { margin: 12px 0 0; padding: 12px 12px 10px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 11px; background: rgba(255, 255, 255, .02); }
+  #direct .row { margin-bottom: 9px; }
+  #direct .kv { margin-top: 2px; align-items: center; }
+  #direct p { margin: 11px 0 0; }
   .save { color: #3ECF8E; font-size: 12px; opacity: 0; transition: opacity 160ms ease; }
   .save.on { opacity: 1; }
 </style>
@@ -53,9 +62,22 @@
   <p class="sub">Ctrl+F that finds by meaning — and quotes the exact sentences it found.</p>
 
   <section>
+    <h2>Connect — how Tracky reaches Jev</h2>
+    <label class="row"><input type="radio" name="mode" id="mode-helper" value="helper"> <span><b>Local helper</b> — the key stays in <code>server/.env</code> on this machine, and the panel talks only to 127.0.0.1. <span class="muted">(default)</span></span></label>
+    <label class="row"><input type="radio" name="mode" id="mode-direct" value="direct"> <span><b>Direct</b> — no helper, no Node, no terminal: paste your own Jev key and the extension calls Jev itself.</span></label>
+    <p class="muted" id="mode-note" hidden></p>
+    <div id="direct" hidden>
+      <label class="row" style="gap:10px"><span>Key</span> <input type="password" id="dkey" autocomplete="off" spellcheck="false" placeholder="paste your Jev key"></label>
+      <label class="row" style="gap:10px"><span>Route</span> <select id="dsource"></select></label>
+      <div class="kv"><button id="dtest" type="button">Test key</button> <span class="muted" id="dtest-note">One tiny real call proves the key before you search.</span></div>
+      <p class="muted">The key is stored in this browser's storage on this machine only — never synced, never sent anywhere except the route above, and never shared with anyone else's install.</p>
+    </div>
+  </section>
+
+  <section>
     <h2>Helper</h2>
     <div id="helper"><span class="dot" id="hdot"></span><span id="htext">checking…</span></div>
-    <p class="muted" style="margin:10px 0 0">If it says the helper is down, start it with <code>node server/server.mjs</code>. Page text goes only to this local helper on 127.0.0.1 — it is never uploaded anywhere else, and the helper logs counts, never text.</p>
+    <p class="muted" id="helper-note" style="margin:10px 0 0">If it says the helper is down, start it with <code>node server/server.mjs</code>. Page text goes only to this local helper on 127.0.0.1 — it is never uploaded anywhere else, and the helper logs counts, never text.</p>
   </section>
 
   <section>
@@ -89,6 +111,7 @@
     <button id="reset" type="button">Reset today's meter</button>
   </section>
 </main>
+<script src="direct.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

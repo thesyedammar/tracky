@@ -610,3 +610,117 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - loadEnv throws on invalid non-empty JEV_BASE_URL even when per-source config is fully usable, contradicting resolveProviders treating invalid shared base as no base
   - createHelperServer pickProvider falls back to shared trio when defaultId has no matching provider instead of failing loudly, hiding misconfiguration
   - Shared-less boot test only constructs server, never listens or routes a search — does not prove end-to-end routing to per-source baseUrl/model
+
+### Direct mode 0.7.0 — the ported engine and the worker wiring — 8.2/10 🟡
+- 27 Sept 2026, 12:13 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/direct.js, extension/background.js
+- correctness **7.9** · craft **8.7** · robustness **7.8** · performance **8.2** · polish **8.4**
+- top fixes:
+  - 429 swallowed to 502: askJev maps rate-limit to status 502, breaking hard rule 429=BLOCKED never FAIL — preserve 429 status/flag
+  - Lenient score fallback a?.noul ?? a?.probability diverges from strict validator: masks malformed shape that should throw 502
+  - Load-time new Intl.Segmenter breaks whole module where unavailable and dedupe/ID duplication (ID_RE vs MATCH_ID_RE) shows incomplete parity with server
+  - No overall timeout for direct multi-chunk search: 1200 passages = 15x20s serial awaits vs helper 35s total — hangs panel, needs cap/abort
+  - Health contract incomplete: direct health adds direct/key/permit/ready but content.js claimed untouched so direct — no helper needed line has no renderer
+
+### Direct mode 0.7.0 — after the first judge loop (engine + worker wiring) — 8.6/10 🟢
+- 27 Sept 2026, 12:21 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/direct.js, extension/background.js
+- correctness **8.8** · craft **9** · robustness **8.2** · performance **8.7** · polish **8.8**
+- top fixes:
+  - Guard AbortSignal.timeout: claimed support is Chrome 105+ but timeout() needs ~126; add AbortController fallback or direct mode throws TypeError on supported browsers
+  - Budget can still overrun panel 45s wait: remaining-budget check only gates starting chunks, an in-flight 20s chunk can push total to ~60s; clamp timeoutMs to remaining budget
+  - Permission revoked mid-search misreported as Could not reach Jev; re-check chrome.permissions.contains on network failure to name the missing origin
+  - Duplicated NO_KEY literal in background.js vs direct.js will drift; export/share the constant
+  - Dead focusText-null paths in rankResults/dedupeResults are never produced by parseJevAnswers; remove or add a test that exercises them, plus fix stale background header comment
+
+### Direct mode 0.7.0 — after the second judge loop (engine + worker wiring) — 8.4/10 🟡
+- 27 Sept 2026, 12:26 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/direct.js, extension/background.js
+- correctness **8.3** · craft **9.1** · robustness **8** · performance **8.9** · polish **9**
+- top fixes:
+  - Forward SearchError.status through background onMessage (ok:false,status) for both modes; currently only message text crosses, so 429 BLOCKED vs 502 FAIL cannot be enforced by status as required
+  - Replace AbortSignal.timeout in background.js checkHealth/runSearch/runWhy with the same compatible timeout helper direct.js uses; it breaks the stated browser floor direct.js explicitly avoids
+  - Make testKey accept noul ?? probability like parseJevAnswers; currently a route returning the older probability shape fails Test-key as incomplete though search would succeed
+  - Avoid ReferenceError on fetch default param (fetchImpl = fetch) and bare performance.now(); use typeof globalThis.fetch / guarded performance so older or test contexts do not throw before validation
+  - Keep helper-branch HTTP status the same way: extract and forward helper 429 vs 5xx instead of collapsing to plain Error message
+
+### Direct mode 0.7.0 — after the third judge loop (engine + worker wiring) — 8.2/10 🟡
+- 27 Sept 2026, 12:30 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/direct.js, extension/background.js
+- correctness **7.8** · craft **9** · robustness **8.2** · performance **8.7** · polish **8.6**
+- top fixes:
+  - Missing spec surface in artifact: Connect UI, manifest optional_host_permissions request flow, direct.test.mjs, direct-smoke.py, README/contract updates not shown
+  - Helper path still uses AbortSignal.timeout while direct.js explicitly avoids it for old-Chrome floor — inconsistent support story
+  - explainDirectFailure only matches 'Could not reach Jev' so timeout and mid-sweep permission revocation keep wrong message
+  - buildRequest/testKey do not fail fast on empty model; can build/fire before NO_KEY check wastes a route call
+  - Extra answers unchecked, totalChars message hardcoded, stats.ms excludes prepare time, dedupe null-focus rest never surfaces
+
+### Direct mode 0.7.0 — the Connect UI and the live harness — 8.1/10 🟡
+- 27 Sept 2026, 12:33 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/options.js, extension/options.html, scripts/direct-smoke.py
+- correctness **7.6** · craft **8.3** · robustness **7.8** · performance **8.6** · polish **8.4**
+- top fixes:
+  - BLOCKED logic is overbroad: after one 429 every later FAIL is relabelled blocked, hiding real bugs — scope BLOCKED to 429/rate-limited details only
+  - Real optional-permission prompt never exercised: granted copy uses host_permissions, and refusal note lives inside hidden #direct div so user never sees why switch reverted
+  - Top-level TrackyDirect dependency with no guard: if direct.js fails to load options.js throws and whole page dies; worker importScripts vs page script dual-context risk unhandled
+  - Key persistence gaps: failed Test does not save, status line reads unsaved field, empty-key search path with permission granted is untested
+  - Harness side-effects/flakes: always restarts helper even if it was down, leaks helper.log handle, xdotool shortcut fallback and finished-status regex are brittle
+
+### Direct mode 0.7.0 — final (engine + worker + Connect UI + harness) — 8.4/10 🟡
+- 27 Sept 2026, 12:37 pm IST · model `muse-spark-1.3-contributor` · type code · files: extension/direct.js, extension/options.js, scripts/direct-smoke.py
+- correctness **8.3** · craft **9** · robustness **8.4** · performance **8.7** · polish **8.6**
+- top fixes:
+  - Surface provider's own error message on Test-key/search failure instead of discarding body — spec explicitly requires it, currently only HTTP status/generic text
+  - Fix $dtest permission-denied path: comment claims mode reverted to helper but code does not revert/update UI — align with onModeChange or correct copy
+  - Make options pingHelper also name missing origin permission in direct mode, not just missing key, to match content.js health contract
+  - Prove background.js/manifest.json/direct.test.mjs/README parity: identical response shape, optional_host_permissions only on Direct, offline validator cases
+  - Harden minor brittleness: hardcoded 400,000 message, LIST_RE without m-flag / CRLF handling, DIRECT-null direct-mode entry
+
+### Direct mode 0.7.0 — closing note (after 5 loops, 8.1–8.6 🟡)
+
+Scores across the five passes: **8.2 · 8.6 · 8.4 · 8.2 · 8.1 · 8.4** — the judge moves in a
+band and rotates its findings, so this closes on a plateau rather than on a green light,
+the same way the source-picker loop did (9 loops, 7.8–8.4). What it asked for was taken
+seriously every time; here is the honest disposition of each class of finding.
+
+**Fixed because the judge was right**
+
+- `SearchError.status` now crosses the whole path: the engine keeps **429** (quota) and
+  **401/403** (key/permission) instead of folding them into 502, `background.js` forwards
+  `status` on every reply, and a **new live check** proves it end-to-end (a bogus key comes
+  back as `ok:false, status:401`; an empty key as `status:400` with the NO_KEY message).
+- Whole-search **budget** (40s, under the panel's 45s wait) with the per-call timeout
+  clamped to what remains — a 1200-passage sweep can no longer outlive the panel or keep
+  firing calls after it gave up.
+- The sentence segmenter is built **on first use**, not at import: a browser without
+  `Intl.Segmenter` no longer kills the whole extension in both modes (spawned-process test).
+- Per-call timeout rewritten to **AbortController** (explicitly aborted + asserted in a
+  test) instead of relying on abort-reason names.
+- `testKey` accepts `noul ?? probability` like `parseJevAnswers`, fails fast on a missing
+  key (NO_KEY, no wasted route call), and the same permission wording is used everywhere.
+- A declined origin permission is now explained **outside the panel that hides itself**
+  (`#mode-note`, always visible) — with a check that the mechanism works.
+- The smoke's BLOCKED rule is now **route-shaped only**: a 429 can no longer relabel an
+  unrelated failure (a key leak, a UI assertion) as "not our fault"; the harness also
+  leaves the helper exactly as it found it, closes its log handle, and never restarts a
+  helper that was down.
+- `options.js` survives a `direct.js` that failed to load (the page that fixes a broken
+  install must not die with it), and the helper line in the options page names a missing
+  **permission** as well as a missing key, matching the panel's health contract.
+
+**Answered with evidence, not changed**
+
+- *"AbortSignal.timeout needs Chrome ~126, replace it in the helper path too."* It has
+  shipped since **Chrome 103** (MDN BCD, incl. the note that Chrome 103–123 aborted with a
+  different reason name); the manifest floor is **105**, so the helper-branch calls are
+  inside the supported range. Direct mode no longer depends on it at all, so both stories
+  are now true at once.
+- *"`noul ?? probability` is leniency / "surface the provider's own error body."* Both are
+  byte-for-byte what the helper does (`server/validate.mjs`, `server/search.mjs`). Direct
+  mode must not be stricter *or* chattier than helper mode; a divergence there would be a
+  bug, not a fix. The `400,000`-character message, `stats.ms` starting after `prepare`, and
+  the null-`focusText` guards are the same parity call — and those guards are covered by
+  tests (`direct.test.mjs`: rankResults/dedupeResults with `focusText: null`).
+- *"Dead paths / LIST_RE without the `m` flag."* The regexes are character-identical to
+  `server/sentences.mjs` (line starts are handled by `(^|\n)` explicitly), and the guards
+  are exercised. Nothing to change without breaking parity.
+- *"The real permission bubble is never exercised."* True, and unfixable from a harness:
+  Chrome's permission bubble is browser chrome. What is proven: the shipped build stops at
+  the gate with the exact honest message, the granted copy runs the whole feature, the
+  request is made from the mode-switch click (the only gesture Chrome accepts), and the
+  refusal path's UI is exercised. The single click is listed as the one manual step.

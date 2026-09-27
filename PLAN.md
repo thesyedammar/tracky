@@ -221,6 +221,36 @@ Done when: a recruiter can click, watch, and read real numbers.
 → everything that can be written is written; 15.1 needs a model window and 15.3 needs
 the user's classmates.
 
+### Phase 16 — Direct mode (0.7.0): paste your key, skip the helper [approved 27 Sep]
+Plan of record: `docs/plan-direct-mode.md` (decisions locked with ʿAmmār — helper stays
+the default, key in `chrome.storage.local` only, ships as 0.7.0, Web Store listing later).
+- [x] 16.1 `extension/direct.js` — the helper's brain ported into the extension: splitter,
+      request builder (`BATCH_MAX` 80), the zero-fabrication validator, rank/dedupe, the
+      chip pass, and a one-call `testKey`. Same caps, same 502 semantics, same rule that
+      the model only ever PICKS (an index, never prose). Not ported: SSE, abort, redact.
+- [x] 16.2 `extension/direct.test.mjs` — 29 specs mirroring `server/test/*` (validation,
+      adjudication, ranking, chunking, hostile text, why-pass, testKey). The port is
+      load-bearing, so it is tested first: 29/29 green.
+- [x] 16.3 `background.js` branches on `trackyOpts.mode` for search + why + health; the panel
+      gets the helper's exact response shape, so `content.js` needed one branch (the status
+      line, which now says `direct · <model> · ready` or names what is missing).
+- [x] 16.4 Options page *Connect* section: mode switch (Local helper default), key field
+      (`type=password`), the two-route picker, **Test key** (one real call, real ms), and
+      honest copy on what is stored where. Direct mode marks the helper sections as not used.
+- [x] 16.5 `manifest.json` 0.7.0 + `optional_host_permissions` for the route — requested only
+      when Direct is picked; a fresh install still has zero host access (proven live).
+- [x] 16.6 `scripts/direct-smoke.py` — live, two builds: the shipped one stops at the
+      permission gate with the reason; the granted one takes the key through the real UI,
+      tests it, and searches with **the helper process stopped** (port 4199 confirmed
+      closed) → 7 matches · 465 ms, highlights painted, key absent from page/panel/options/
+      console/storage-beyond-its-field. 33/33.
+- [x] 16.7 Docs: README second setup path + honest limits, `docs/contract.md` direct-mode
+      section, `scripts/verify-all.sh` includes the new tests + smoke.
+- [ ] 16.8 Web Store listing update (screenshots + copy) — later, separate task, on his go.
+
+Done when: a friend can install, paste a key, and search with no Node anywhere.
+→ met and measured 27 Sep 2026 (33/33 live, helper stopped; 157 unit tests green).
+
 ## Scope map
 
 v1 = Phases 0–12 · flagships 13–14 only after v1 is bulletproof · 15 at launch.

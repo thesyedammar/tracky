@@ -100,6 +100,34 @@ Response: `{ "reasons": [{ "passageId": "p0", "reason": "states a price or fee" 
 - Highlighting/painting — client-side (extension paints the page; playground paints its preview).
 - Why-chip *display*: the client decides which matches get chips and how they read.
 
+## Direct mode — the same contract, run inside the extension (added 0.7.0)
+
+The extension can also reach Jev by itself, with a key the user pastes in the options
+page — no helper, no Node, no terminal. **Nothing about the wire shapes above changes**:
+the same request body is built, the same no-fabrication gate adjudicates the answer, and
+the panel receives the same `{ results }` / `{ reasons }` payloads it gets from the
+helper. What moves is *where* the engine runs: `extension/direct.js` is a port of the
+helper's brain (splitter, request builder, validator, ranker, chip pass) with the same
+constants, and `extension/direct.test.mjs` mirrors the server's own cases against it.
+
+- Identical caps: batch **80**, ≤**1,200** passages, ≤**400,000** characters, query ≤**400** chars.
+- `sentence` is still an exact character slice of the passage; an unknown passage id, an
+  out-of-range pick or a nonsense score still fails loudly (the same 502 semantics), and
+  the answer is never repaired.
+- The pick is an **index** only: model-authored prose (`text`, `offsets`) is ignored, and
+  the sentence text comes from our splitter.
+- No `provider` field: the route is the one the user picked in the options page
+  (`zen-paid` → `jev-1.13`, `zen-free` → `jev-1.13-free`), sent with the user's own key in
+  the `Authorization: Bearer …` header.
+- **Not ported, on purpose:** SSE progress, the abort plumbing, `redact` (in direct mode
+  there is no helper hop whose config could switch redaction on — the text goes from the
+  user's machine straight to the route they chose).
+- The key lives in `chrome.storage.local` on that machine only: never synced, never sent
+  anywhere except the chosen route, never written into a package. Direct mode adds **no
+  install-time permission** — the host permission for the route is requested at the
+  moment the user picks Direct, and a search without it fails with the reason, not a
+  mystery.
+
 ## Mocks (build the client before the server exists)
 
 - `app/mock/search.json` — happy path (3 results)

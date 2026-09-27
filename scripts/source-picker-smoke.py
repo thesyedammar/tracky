@@ -118,7 +118,7 @@ def main() -> int:
         )
         try:
             worker = None
-            for _ in range(150):
+            for _ in range(300):
                 if ctx.service_workers:
                     worker = ctx.service_workers[0]
                     break

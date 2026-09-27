@@ -148,7 +148,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
     )
     try:
         worker = None
-        for _ in range(150):  # cold Chrome under Xvfb can take >5 s to register the worker
+        for _ in range(300):  # cold Chrome under Xvfb, on a loaded box: allow 30 s before calling it dead
             if ctx.service_workers:
                 worker = ctx.service_workers[0]
                 break

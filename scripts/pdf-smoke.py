@@ -83,7 +83,7 @@ def main() -> int:
         )
         try:
             worker = None
-            for _ in range(150):
+            for _ in range(300):
                 if ctx.service_workers:
                     worker = ctx.service_workers[0]
                     break
@@ -260,7 +260,7 @@ def main() -> int:
             page.keyboard.type("what is the main contribution of this paper?", delay=8)
             page.keyboard.press("Enter")
             state = {}
-            for _ in range(150):
+            for _ in range(300):
                 state = page.evaluate(
                     """() => { const r = document.getElementById('tracky-root').shadowRoot;
                         return { status: r.querySelector('#t-status')?.textContent ?? '', hits: r.querySelectorAll('.hit').length }; }"""

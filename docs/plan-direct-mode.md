@@ -56,3 +56,26 @@ New section "Connect" with:
 ## Jev cost estimate
 
 ~10–15 searches total for the whole feature (validator tests are offline).
+
+## What changed after the plan (and why)
+
+- `content.js` **did** need one branch after all: the plan said the response shape is
+  identical, and it is — but the health line has to say *which* mode answered. Direct
+  mode synthesizes a local health reply (`{name:"tracky-direct", direct:true, ready}`)
+  and the ping now renders `direct · <model> · ready`, or names the missing piece
+  (no key / no origin permission). A stale "helper … ready" line after a reload would be
+  a lie about the running mode; the options page now pings *after* the saved mode is read,
+  and the smoke checks it.
+- `searchText` gained a whole-search budget (`DEFAULT_BUDGET_MS = 40s`, under the panel's
+  45s wait). Without it a 1200-passage sweep could fire 15 chunks × 20s serially and the
+  panel would give up first, leaving calls running against the route. The first chunk
+  always runs; later chunks only while the budget holds.
+- A 429 now keeps status **429** (was folded into 502 with the same message): the hard
+  rule — a quota window is BLOCKED, never a product failure — is enforced by the status,
+  not only by the wording.
+- The sentence segmenter is built on first use instead of at load: `direct.js` is
+  `importScripts`-ed by the worker, so a load-time throw on a browser without
+  `Intl.Segmenter` would take down the whole extension in both modes.
+- The `noul ?? probability` score fallback stays: `server/validate.mjs` accepts either
+  field name, and direct mode must not be stricter than helper mode. Missing/non-numeric
+  values still fail loudly.
