@@ -490,3 +490,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Tighten de-hyphenation to /\p{L}-$/ so a spaced dash at a line break does not lose its dash
   - Replace estimated run width (len*size*0.5) for gap detection with measured edges or bound the error — condensed/expanded fonts can merge columns or split words
   - Release pdf.js page resources after text-layer build (page.cleanup) instead of retaining every page object in paint/free closures for 300-page docs
+
+### Phase 13 — PDF mode (loop 12, final) — 9.1/10 🟢
+- 27 Sept 2026, 5:41 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/pdf-viewer.js, extension/pdf.html, extension/pdf-stub.js, extension/background.js, extension/manifest.json, scripts/pdf-smoke.py
+- correctness **9.2** · craft **9.3** · robustness **8.9** · performance **8.8** · polish **9.4**
+- top fixes:
+  - Late timeout orphan leaks operators: free() early-returns on pending==1 so timeout path removes wrap without cleanup()
+  - Single-flush claim overstated: per-span rect pass plus second per-line rect pass plus layerBox/clientWidth reads cause multiple flushes
+  - Stub duplicates 600 instead of sharing MAX_BLOCKS constant risking divergence
+  - Hyphen split across CHUNK_MAX_CHARS flush loses de-hyphenation and leaves trailing hyphen in prior block
+  - Paint failure re-arms unconditionally with no backoff or error count, allowing endless retry on a permanently broken page

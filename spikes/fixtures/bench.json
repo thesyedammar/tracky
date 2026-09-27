@@ -49,11 +49,22 @@
       }
     },
     {
-      "name": "insurance deductible and the waiver",
+      "name": "insurance deductible (the amount)",
       "document": "tos",
-      "query": "how much is the insurance deductible and can I reduce it?",
+      "query": "how much is the insurance deductible?",
       "expect": {
         "mustInclude": ["Rs.15,000"],
+        "mustNotInclude": [],
+        "minResults": 1,
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "reducing the deductible (the waiver)",
+      "document": "tos",
+      "query": "how can I reduce the insurance deductible?",
+      "expect": {
+        "mustInclude": ["waiver"],
         "mustNotInclude": [],
         "minResults": 1,
         "maxResults": 8
