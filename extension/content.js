@@ -34,20 +34,50 @@
 
   shadow.innerHTML = `
     <style>
+      /* ── Tokens ───────────────────────────────────────────────────────────────
+         One design language across all three surfaces (this panel, pdf.html, the
+         options page). Keep the block in sync when a token changes.
+         Palette on purpose: 2 neutrals + 1 accent family + ok/bad + the page-mark
+         amber. Nothing else. */
       :host { all: initial; }
       .wrap {
+        --bg: rgba(11, 15, 24, .94);
+        --surface: rgba(255, 255, 255, .055);
+        --surface-2: rgba(255, 255, 255, .09);
+        --line: rgba(255, 255, 255, .085);
+        --line-2: rgba(255, 255, 255, .16);
+        --ink: #E9EDF5;
+        --ink-2: #AAB3C2;
+        --ink-3: #7C8698;
+        --gold: #F5C453;
+        --gold-deep: #E19B2C;
+        --ok: #3ECF8E;
+        --bad: #F26D6D;
+        --ring: rgba(245, 196, 83, .68);
+        --e-out: cubic-bezier(.16, 1, .3, 1);
+        --e-in: cubic-bezier(.4, 0, 1, 1);
+        --e-spring: cubic-bezier(.34, 1.3, .64, 1);
+        --d1: 120ms; --d2: 180ms; --d3: 260ms;
         position: fixed; top: 16px; right: 16px; z-index: 2147483647; width: 360px;
         font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        color: #E9EDF5;
+        color: var(--ink);
       }
       .panel {
-        background: rgba(12, 17, 27, .94);
-        border: 1px solid rgba(255, 255, 255, .09);
+        background: var(--bg);
+        backdrop-filter: blur(14px) saturate(1.2);
+        border: 1px solid var(--line);
         border-radius: 14px; overflow: hidden;
-        box-shadow: 0 18px 50px rgba(0, 0, 0, .45), 0 2px 8px rgba(0, 0, 0, .35);
-        animation: tIn 140ms cubic-bezier(.2, .9, .3, 1);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, .5), 0 2px 10px rgba(0, 0, 0, .35),
+                    inset 0 1px 0 rgba(255, 255, 255, .05);
+        /* A keyboard toggle is opened dozens of times a day: the shell arrives in
+           150ms flat (no scale, no bounce, no per-child stagger) — enough to avoid a
+           jarring pop, never enough to feel like waiting. The motion budget goes to
+           what is actually happening inside: loading, progress, results. */
+        animation: tIn 150ms var(--e-out) both;
+        transform-origin: 100% 0;
       }
-      @keyframes tIn { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
+      @keyframes tIn { from { opacity: 0; transform: translateY(-5px); } }
+      @keyframes tRise { from { opacity: 0; transform: translateY(3px); } }
       header { display: flex; align-items: center; gap: 8px; padding: 11px 12px 9px; }
       .mark {
         width: 16px; height: 16px; border-radius: 5px; flex: none;
@@ -55,48 +85,71 @@
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
       }
       .name { font-weight: 650; letter-spacing: .2px; }
-      .ver { color: #8A94A6; font-size: 11px; margin-left: 5px; }
+      .ver { color: var(--ink-3); font-size: 11px; margin-left: 5px; font-variant-numeric: tabular-nums; }
       .spacer { flex: 1; }
       .close {
-        appearance: none; border: 0; background: transparent; color: #8A94A6;
+        appearance: none; border: 0; background: transparent; color: var(--ink-3);
         font-size: 15px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 8px;
+        transition: background var(--d1) var(--e-out), color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
-      .close:hover { background: rgba(255, 255, 255, .07); color: #E9EDF5; }
-      .close:focus-visible, input:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
+      .close:hover { background: var(--surface-2); color: var(--ink); }
+      .close:active { transform: scale(.92); }
+      .close:focus-visible, input:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
       .box { display: flex; gap: 6px; padding: 0 12px 12px; }
       input[type="text"] {
-        flex: 1; min-width: 0; box-sizing: border-box; background: rgba(255, 255, 255, .05);
-        border: 1px solid rgba(255, 255, 255, .10); border-radius: 10px;
-        color: #E9EDF5; padding: 9px 11px; font: inherit;
+        flex: 1; min-width: 0; box-sizing: border-box; background: var(--surface);
+        border: 1px solid var(--line); border-radius: 10px;
+        color: var(--ink); padding: 9px 12px; font: inherit;
+        transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), box-shadow var(--d2) var(--e-out);
       }
-      input::placeholder { color: #7C8698; }
+      input[type="text"]:hover { background: var(--surface-2); }
+      input[type="text"]:focus {
+        background: rgba(255, 255, 255, .06);
+        border-color: rgba(245, 196, 83, .4);
+        box-shadow: 0 0 0 3px rgba(245, 196, 83, .10);
+      }
+      input::placeholder { color: var(--ink-3); }
       .rescan {
         flex: none; width: 34px; appearance: none; border-radius: 10px; cursor: pointer;
-        border: 1px solid rgba(255, 255, 255, .10); background: rgba(255, 255, 255, .05);
-        color: #AAB3C2; font: 14px/1 ui-monospace, monospace;
+        border: 1px solid var(--line); background: var(--surface);
+        color: var(--ink-2); font: 14px/1 ui-monospace, monospace;
+        transition: background var(--d1) var(--e-out), color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
-      .rescan:hover { background: rgba(255, 255, 255, .09); color: #E9EDF5; }
+      .rescan:hover { background: var(--surface-2); color: var(--ink); }
+      .rescan:active { transform: scale(.94) rotate(-20deg); }
       .rescan:focus-visible, .scope-chip:focus-visible, .recent-chip:focus-visible,
-      .export:focus-visible, .copy:focus-visible, .chip:focus-visible {
-        outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px;
+      .export:focus-visible, .copy:focus-visible, .chip:focus-visible, .walk:focus-visible {
+        outline: 2px solid var(--ring); outline-offset: 1px;
       }
       .recent { display: flex; gap: 6px; padding: 0 12px 9px; overflow-x: auto; scrollbar-width: none; }
       .recent[hidden] { display: none; }
       .recent::-webkit-scrollbar { display: none; }
       .recent-chip {
         flex: none; appearance: none; border: 1px dashed rgba(255, 255, 255, .14); background: transparent;
-        color: #98A2B3; font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+        color: var(--ink-2); font: inherit; font-size: 11px; line-height: 1; padding: 5px 10px; border-radius: 999px; cursor: pointer;
         white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis;
+        transition: color var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
-      .recent-chip:hover { color: #E9EDF5; border-color: rgba(255, 255, 255, .28); }
+      .recent-chip:hover { color: var(--ink); border-color: rgba(255, 255, 255, .28); }
+      .recent-chip:active { transform: scale(.96); }
       .sr {
         position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
         clip: rect(0 0 0 0); white-space: nowrap; border: 0;
       }
-      /* The one and only reduced-motion block: no entrance animation, no pulse, no transitions. */
+      /* One reduced-motion block for the whole panel: no entrance, no stagger, no
+         sweep, no spinner, no transitions — the same information, standing still. */
       @media (prefers-reduced-motion: reduce) {
-        .panel, .dot.wait { animation: none !important; }
-        .hit, .wrap, .dot, .jump, .recent-chip, .chip { transition: none !important; }
+        /* Fewer and gentler, not zero: no movement, no loops — but color, background
+           and opacity still cross-fade, because those aid comprehension. */
+        .panel, .dot.wait, .sk::after, .card::after, .pbar::after { animation: none !important; }
+        .hit { animation: none !important; }
+        .hit, .recent-chip, .chip, .scope-chip, .export, .rescan, .close, .walk,
+        input[type="text"], .pbar i, .dot, .status, .hit .copy {
+          transition-property: background-color, border-color, color, opacity, box-shadow !important;
+        }
+        .hit:hover, .rescan:active, .close:active, .chip:active, .walk:active, .export:active,
+        .recent-chip:active, .scope-chip:active, .retry:active, .hit .copy:active,
+        .hit .jump:active { transform: none !important; }
       }
       .status {
         display: flex; align-items: center; gap: 9px; padding: 10px 12px 12px;
@@ -111,73 +164,141 @@
         font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #FFE4E4;
         background: rgba(242, 109, 109, .2); border: 1px solid rgba(242, 109, 109, .55);
         border-radius: 999px; padding: 4px 10px;
+        transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
       .retry:hover { background: rgba(242, 109, 109, .3); border-color: rgba(242, 109, 109, .75); }
-      .retry:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
-      .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
-      .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
-      .dot.idle { background: #8A94A6; }
-      .dot.wait { background: #F5C453; animation: tPulse 1.1s ease-in-out infinite; }
-      @keyframes tPulse { 50% { opacity: .35; } }
+      .retry:active { transform: scale(.96); }
+      .retry:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; transition: background var(--d2) var(--e-out), box-shadow var(--d2) var(--e-out); }
+      .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
+      .dot.bad { background: var(--bad); box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
+      .dot.idle { background: var(--ink-3); }
+      /* Waiting = a slow gold ring turning. Never a brightness pulse: something that
+         blinks reads as broken, something that turns reads as busy. */
+      .dot.wait {
+        background: transparent; box-shadow: none;
+        border: 2px solid rgba(245, 196, 83, .22); border-top-color: var(--gold);
+        animation: tSpin 900ms linear infinite;
+      }
+      @keyframes tSpin { to { transform: rotate(360deg); } }
       .hint { color: #8D97A8; font-size: 11.5px; line-height: 1.6; padding: 2px 12px 12px; }
-      kbd { background: rgba(255, 255, 255, .08); border-radius: 4px; padding: 1px 5px; font: 10px ui-monospace, monospace; }
-      .results { display: none; max-height: 320px; overflow: auto; padding: 2px 12px 10px; }
+      kbd {
+        background: var(--surface-2); border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 5px; padding: 1px 5px; font: 10px ui-monospace, monospace;
+      }
+      /* The sweep: how the panel shows work in flight without a spinner per row.
+         A single 2px bar, driven by real progress when the engine reports it. */
+      .pbar {
+        position: relative; height: 3px; margin: 0 12px 11px; border-radius: 3px;
+        background: rgba(255, 255, 255, .10); overflow: hidden;
+      }
+      .pbar i {
+        display: block; height: 100%; width: 100%; transform-origin: 0 50%;
+        background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+        transform: scaleX(0); transition: transform var(--d3) var(--e-out);
+      }
+      /* No count to show yet: a steady gold block sits on the track and a sheen
+         travels across it — always visible, never a bar that blinks in and out.
+         When the engine reports real passes, the sweep yields to the fill. */
+      .pbar::after {
+        content: ""; position: absolute; inset: 0; opacity: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .22), transparent);
+        transform: translateX(-100%);
+      }
+      .pbar.sweep i { transform: scaleX(.35); }
+      .pbar.sweep::after { opacity: 1; animation: tSweep 1.15s linear infinite; }
+      @keyframes tSweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+      .results { display: none; max-height: 320px; overflow: auto; padding: 2px 12px 10px; overscroll-behavior: contain; }
       .results.open { display: block; }
+      /* Skeleton rows while a search is in flight: the shape of the answer before
+         the answer, so the panel never sits empty and never jumps when it fills. */
+      .sk {
+        position: relative; border-radius: 10px; margin-bottom: 7px; overflow: hidden;
+        background: rgba(255, 255, 255, .028); padding: 9px 11px;
+      }
+      .sk i { display: block; height: 7px; border-radius: 4px; background: rgba(255, 255, 255, .10); }
+      .sk i:first-child { width: 38%; margin-bottom: 7px; }
+      .sk i:last-child { width: 74%; }
+      .sk:nth-child(2) i:last-child { width: 58%; }
+      .sk::after {
+        content: ""; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .055), transparent);
+        animation: tShimmer 1.25s linear infinite;
+      }
+      @keyframes tShimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
       .hit {
-        padding: 8px 10px; border-radius: 10px; margin-bottom: 7px;
-        background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .06);
+        padding: 9px 12px; border-radius: 10px; margin-bottom: 7px;
+        background: var(--surface); border: 1px solid rgba(255, 255, 255, .075);
+        animation: tRise var(--d2) var(--e-out) both;
+        animation-delay: calc(var(--i, 0) * 22ms); /* group entrance: 30-80ms apart at most */
       }
       .hit:last-child { margin-bottom: 2px; }
-      .hit { position: relative; padding-right: 34px; transition: background 120ms ease, border-color 120ms ease; }
-      .hit:hover { background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .13); }
+      .hit { position: relative; padding-right: 34px; transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out); }
+      .hit:hover { background: var(--surface-2); border-color: rgba(255, 255, 255, .13); transform: translateY(-1px); }
       .hit.selected { border-color: rgba(245, 196, 83, .45); background: rgba(245, 196, 83, .08); }
       .hit .jump {
         appearance: none; border: 0; background: transparent; color: inherit; font: inherit;
         text-align: left; width: 100%; padding: 0; cursor: pointer; display: block;
       }
-      .hit .jump:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 2px; border-radius: 6px; }
+      .hit .jump:active { transform: scale(.995); }
+      .hit .jump:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 6px; }
       .hit .rank { display: inline-block; min-width: 12px; margin-right: 6px; color: #66707F; font-size: 11px; font-variant-numeric: tabular-nums; }
-      .hit .score { display: inline-block; min-width: 36px; margin-right: 7px; color: #F5C453; font-weight: 650; font-variant-numeric: tabular-nums; }
-      .hit .sentence { color: #DEE5EF; }
+      .hit .score { display: inline-block; min-width: 36px; margin-right: 7px; color: var(--gold); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .hit .sentence { color: #DEE5EF; line-height: 1.5; }
       .hit .copy {
         position: absolute; top: 5px; right: 5px; appearance: none; border: 0; background: transparent;
-        color: #8A94A6; cursor: pointer; padding: 4px 6px; border-radius: 7px; line-height: 0;
-        opacity: 0; transition: opacity 120ms ease;
+        color: var(--ink-3); cursor: pointer; padding: 4px 6px; border-radius: 7px; line-height: 0;
+        opacity: 0; transition: opacity var(--d1) var(--e-out), background var(--d1) var(--e-out), color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
       .hit:hover .copy, .hit .copy:focus-visible { opacity: 1; }
-      .hit .copy:hover { background: rgba(255, 255, 255, .1); color: #E9EDF5; }
+      .hit .copy:hover { background: rgba(255, 255, 255, .1); color: var(--ink); }
+      .hit .copy:active { transform: scale(.9); }
       @media (hover: none) { .hit .copy { opacity: 1; } }
-      .empty { color: #8A94A6; padding: 8px 2px 4px; }
-      .empty .tip { color: #7C8698; font-size: 11px; margin-top: 4px; }
-      .scope { display: flex; gap: 6px; padding: 0 12px 10px; overflow-x: auto; }
+      .empty { color: var(--ink-2); padding: 8px 2px 4px; animation: tRise var(--d3) var(--e-out) both; }
+      .empty .tip { color: var(--ink-3); font-size: 11px; margin-top: 4px; }
+      .scope { display: flex; gap: 6px; padding: 0 12px 10px; overflow-x: auto; scrollbar-width: none; }
       .scope[hidden] { display: none; }
       .scope::-webkit-scrollbar { display: none; }
       .scope-chip {
-        flex: none; appearance: none; border: 1px solid rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .04);
-        color: #AAB3C2; font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+        flex: none; appearance: none; border: 1px solid var(--line); background: var(--surface);
+        color: var(--ink-2); font: inherit; font-size: 11px; line-height: 1; padding: 5px 10px;
+        border-radius: 999px; cursor: pointer; white-space: nowrap;
+        display: inline-flex; align-items: center; gap: 4px;
+        transition: background var(--d1) var(--e-out), color var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
-      .scope-chip:hover { background: rgba(255, 255, 255, .08); color: #E9EDF5; }
-      .scope-chip.on { border-color: rgba(245, 196, 83, .5); background: rgba(245, 196, 83, .12); color: #F5C453; }
-      .scope-chip .n { opacity: .6; }
+      .scope-chip:hover { background: var(--surface-2); color: var(--ink); }
+      .scope-chip:active { transform: scale(.96); }
+      .scope-chip.on { border-color: rgba(245, 196, 83, .5); background: rgba(245, 196, 83, .12); color: var(--gold); }
+      .scope-chip .n { opacity: .6; font-variant-numeric: tabular-nums; }
+      /* The answer card: one soft sweep as it arrives — attention, not decoration. */
       .card {
-        margin: 2px 0 10px; padding: 10px 11px; border-radius: 12px;
+        position: relative; overflow: hidden;
+        margin: 2px 0 10px; padding: 12px 13px; border-radius: 12px;
         background: linear-gradient(180deg, rgba(245, 196, 83, .10), rgba(245, 196, 83, .03));
         border: 1px solid rgba(245, 196, 83, .25);
+        animation: tRise var(--d3) var(--e-out) both;
       }
-      .card-title { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: #F5C453; margin-bottom: 7px; }
+      .card::after {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: linear-gradient(100deg, transparent 30%, rgba(245, 196, 83, .12) 50%, transparent 70%);
+        animation: tCard 900ms var(--e-out) 120ms 1 both;
+      }
+      @keyframes tCard { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+      .card-title { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: var(--gold); margin-bottom: 7px; }
       .card-line { display: flex; gap: 8px; margin-bottom: 6px; }
       .card-line:last-of-type { margin-bottom: 2px; }
-      .card-sentence { color: #EDF1F7; }
+      .card-sentence { color: #EDF1F7; line-height: 1.55; }
       .chip {
         flex: none; min-width: 17px; height: 17px; appearance: none; border-radius: 6px;
-        background: rgba(245, 196, 83, .16); border: 1px solid rgba(245, 196, 83, .4); color: #F5C453;
+        background: rgba(245, 196, 83, .16); border: 1px solid rgba(245, 196, 83, .4); color: var(--gold);
         font: 650 10px/1 ui-monospace, monospace; display: inline-flex; align-items: center;
         justify-content: center; cursor: pointer; padding: 0 4px;
+        transition: background var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
       .chip:hover { background: rgba(245, 196, 83, .28); }
-      .card-foot { color: #8A94A6; font-size: 11px; margin-top: 5px; }
-      .group { color: #7C8698; font-size: 10px; letter-spacing: .5px; text-transform: uppercase; padding: 8px 2px 6px; }
+      .chip:active { transform: scale(.9); }
+      .card-foot { color: var(--ink-2); font-size: 11px; margin-top: 5px; }
+      .group { color: var(--ink-3); font-size: 10px; letter-spacing: .5px; text-transform: uppercase; padding: 8px 2px 6px; }
       /* The find bar, like the browser's own: which match of how many, and two
          chevrons to walk them. Only local hits can be walked — other tabs' quotes
          need their tab brought forward first. */
@@ -185,32 +306,39 @@
       .findrow[hidden] { display: none; }
       .findrow .walk {
         appearance: none; cursor: pointer; width: 26px; height: 23px; padding: 0;
-        color: #E9EDF5; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12);
+        color: var(--ink); background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12);
         border-radius: 7px; font: 13px/1 ui-sans-serif, system-ui, sans-serif;
+        transition: background var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
       .findrow .walk:hover { background: rgba(255, 255, 255, .12); }
+      .findrow .walk:active { transform: scale(.93); }
       .findrow .walk:disabled { opacity: .35; cursor: default; }
-      .findrow .find-label { color: #AAB3C2; font-size: 11.5px; }
-      .findrow .count { margin-left: auto; color: #F5C453; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+      .findrow .find-label { color: var(--ink-2); font-size: 11.5px; }
+      .findrow .count { margin-left: auto; color: var(--gold); font-size: 11.5px; font-variant-numeric: tabular-nums; }
       .hit .tag { display: inline-block; min-width: 36px; margin-right: 7px; color: #9FB4D8; font-size: 11px; font-weight: 600; }
       .hit .why { display: block; margin: 5px 0 0 19px; color: #9CC6A9; font-size: 11px; }
       .hit .why[hidden] { display: none; }
       .results-foot { padding: 5px 0 2px; }
       .export {
-        appearance: none; border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .04);
-        color: #AAB3C2; font: inherit; font-size: 11px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+        appearance: none; border: 1px solid rgba(255, 255, 255, .12); background: var(--surface);
+        color: var(--ink-2); font: inherit; font-size: 11px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+        transition: background var(--d1) var(--e-out), color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
       }
-      .export:hover { background: rgba(255, 255, 255, .08); color: #E9EDF5; }
+      .export:hover { background: var(--surface-2); color: var(--ink); }
+      .export:active { transform: scale(.97); }
       .results::-webkit-scrollbar { width: 8px; }
       .results::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 8px; }
+      .results::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .22); }
       /* Cross-tab (Phase 14): opt-in, so the toggle only appears when the options
          page has enabled it. Other tabs' hits are a separate section, each labelled
          with its tab — they are quotes from that tab, and clicking one goes there. */
       .xtabs { display: flex; gap: 9px; padding: 0 12px 10px; align-items: center; }
       .xtabs button { flex: none; font: 11.5px/1 ui-sans-serif, system-ui, sans-serif; color: #cfd6e4; background: rgba(255,255,255,.06);
-        border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 5px 10px; cursor: pointer; }
-      .xtabs button[aria-pressed="true"] { background: rgba(212,175,55,.18); border-color: rgba(212,175,55,.5); color: #F5C453; }
-      .xtabs .note { font-size: 11px; color: #98A2B3; line-height: 1.4; }
+        border: 1px solid rgba(255,255,255,.12); border-radius: 999px; padding: 5px 10px; cursor: pointer;
+        transition: background var(--d1) var(--e-out), color var(--d1) var(--e-out), transform var(--d1) var(--e-out); }
+      .xtabs button:active { transform: scale(.96); }
+      .xtabs button[aria-pressed="true"] { background: rgba(245, 196, 83, .16); border-color: rgba(245, 196, 83, .5); color: var(--gold); }
+      .xtabs .note { font-size: 11px; color: var(--ink-2); line-height: 1.4; }
       .xtab-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #9aa4b8;
         padding: 10px 12px 4px; border-top: 1px solid rgba(255,255,255,.07); margin-top: 8px; }
       .xtab-head .t { color: #cfd6e4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
@@ -230,6 +358,7 @@
             placeholder="Search this page by meaning…" aria-label="Search this page by meaning">
           <button class="rescan" id="t-rescan" type="button" aria-label="Re-scan this page" title="Re-scan this page (it may have changed)">⟳</button>
         </div>
+        <div class="pbar" id="t-pbar" aria-hidden="true"><i></i></div>
         <div class="recent" id="t-recent" hidden></div>
         <div class="scope" id="t-scope" hidden></div>
         <div class="xtabs" id="t-xtabs" hidden></div>
@@ -238,7 +367,7 @@
           <span class="dot wait" id="t-dot"></span><span id="t-status">checking the helper…</span>
         </div>
         <span class="sr" id="t-sr" aria-live="polite"></span>
-        <div class="hint">Finds ideas, not just letters — then quotes the exact sentences. <kbd>Enter</kbd> search · <kbd>↑↓</kbd> results · <kbd>Esc</kbd> close.</div>
+        <div class="hint">Quotes the exact sentences it finds. <kbd>Enter</kbd> search · <kbd>↑↓</kbd> results · <kbd>Esc</kbd> close.</div>
       </div>
     </div>`;
 
@@ -249,9 +378,38 @@
   const statusText = $("#t-status");
   const input = $("input");
   const wrap = $(".wrap");
+  const pbar = $("#t-pbar");
+  const prefersReduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  /** Progress, honestly: null = work in flight with no count yet (a light sweeps the
+   *  track), a number = the engine's real pass progress, "done" = fill, then clear. */
+  const setBar = (v) => {
+    if (v === null) {
+      pbar.classList.add("sweep");
+      pbar.firstElementChild.style.transform = ""; // the sweep class owns the fill width
+      return;
+    }
+    pbar.classList.remove("sweep");
+    if (v === "done") {
+      pbar.firstElementChild.style.transform = "scaleX(1)";
+      setTimeout(() => {
+        if (!searching) pbar.firstElementChild.style.transform = "scaleX(0)";
+      }, 340);
+      return;
+    }
+    pbar.firstElementChild.style.transform = `scaleX(${Math.max(0, Math.min(1, v))})`;
+  };
+  // The shape of an answer, before the answer — so the panel never sits empty and
+  // never jumps when the real rows land.
+  const SKELETON = '<div class="sk" aria-hidden="true"><i></i><i></i></div>'.repeat(3);
 
   const setStatus = (kind, text) => {
     dot.className = `dot ${kind}`;
+    if (statusText.textContent !== text && !prefersReduced() && statusText.animate) {
+      statusText.animate(
+        [{ opacity: .4, transform: "translateY(1px)" }, { opacity: 1, transform: "none" }],
+        { duration: 160, easing: "cubic-bezier(.16,1,.3,1)" },
+      );
+    }
     statusText.textContent = text;
     // A persistent failure gets a retry affordance: ask the same question again
     // without retyping it. (Rate limits pass, networks hiccup — a second try should
@@ -338,10 +496,23 @@
     renderRecent(); // the recent row belongs to an empty field
   }
   function close() {
-    wrap.style.display = "none";
+    if (!visible) return;
     visible = false;
     clearTimeout(statusTimer); // no stale revert while hidden
     clearHighlight(); // tidy: the marker belongs to the panel session
+    const panel = $(".panel");
+    const hide = () => {
+      if (!visible) wrap.style.display = "none";
+    };
+    if (prefersReduced() || !panel?.animate) hide();
+    else {
+      panel
+        .animate(
+          [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-6px) scale(.985)" }],
+          { duration: 120, easing: "cubic-bezier(.16,1,.3,1)" },
+        )
+        .finished.then(hide, hide);
+    }
     if (lastFocus && lastFocus.isConnected) lastFocus.focus({ preventScroll: true });
     lastFocus = null;
   }
@@ -496,7 +667,7 @@
 
   const clip = (s) => (s.length > MAX_SHOWN_SENTENCE ? `${s.slice(0, MAX_SHOWN_SENTENCE - 1)}…` : s);
 
-  const hitHtml = (r, i, kind) => `<div class="hit" data-index="${i}">
+  const hitHtml = (r, i, kind) => `<div class="hit" data-index="${i}" style="--i:${Math.min(i, 5)}">
       <button class="jump" type="button" title="Jump to this sentence on the page">
         <span class="rank">${i + 1}</span>${
           kind === "exact" ? `<span class="tag">exact</span>` : `<span class="score">${Math.round(r.score * 100)}%</span>`
@@ -862,19 +1033,50 @@
   }
 
   const flashTimers = new WeakMap();
+  /** A soft gold ring that breathes in, holds, and fades out — then the element is
+   *  handed back exactly as it was found. Inline styles, not a class: a page CSP that
+   *  blocks our stylesheet must not be able to silence the one piece of feedback that
+   *  says "this is the sentence". */
   function flash(el) {
-    const prev = { outline: el.style.outline, offset: el.style.outlineOffset, radius: el.style.borderRadius };
-    el.style.outline = "2px solid rgba(245, 196, 83, .55)";
+    const prev = { outline: el.style.outline, offset: el.style.outlineOffset, radius: el.style.borderRadius, transition: el.style.transition };
+    clearTimeout(flashTimers.get(el));
+    if (REDUCED.matches) {
+      // No motion asked for: show it plainly, take it away plainly.
+      el.style.outline = "2px solid rgba(245, 196, 83, .55)";
+      el.style.outlineOffset = "3px";
+      el.style.borderRadius = "6px";
+      flashTimers.set(
+        el,
+        setTimeout(() => {
+          el.style.outline = prev.outline;
+          el.style.outlineOffset = prev.offset;
+          el.style.borderRadius = prev.radius;
+        }, 1500),
+      );
+      return;
+    }
+    el.style.transition = "outline-color 420ms cubic-bezier(.16, 1, .3, 1)";
+    el.style.outline = "2px solid rgba(245, 196, 83, 0)";
     el.style.outlineOffset = "3px";
     el.style.borderRadius = "6px";
-    clearTimeout(flashTimers.get(el));
+    const raf = requestAnimationFrame(() => {
+      el.style.outlineColor = "rgba(245, 196, 83, .6)"; // …fade in…
+    });
     flashTimers.set(
       el,
       setTimeout(() => {
-        el.style.outline = prev.outline;
-        el.style.outlineOffset = prev.offset;
-        el.style.borderRadius = prev.radius;
-      }, 1500),
+        cancelAnimationFrame(raf);
+        el.style.outlineColor = "rgba(245, 196, 83, 0)"; // …fade out…
+        flashTimers.set(
+          el,
+          setTimeout(() => {
+            el.style.outline = prev.outline;
+            el.style.outlineOffset = prev.offset;
+            el.style.borderRadius = prev.radius;
+            el.style.transition = prev.transition; // …and nothing left behind
+          }, 430),
+        );
+      }, 1300),
     );
   }
 
@@ -1083,6 +1285,7 @@
       return;
     }
     searching = true;
+    let barDone = false; // the fill-and-clear on success must survive the finally block
     const gen = ++whyGen; // any why-reply from an older search is now stale
     clearTimeout(statusTimer); // a stale revert must never overwrite search progress
     try {
@@ -1092,6 +1295,8 @@
         return;
       }
       setStatus("wait", "reading the page…");
+      setBar(null); // work in flight, no count yet
+      showResults(SKELETON); // the shape of the answer while the page is read
       let collected;
       try {
         collected = window.__trackyCollect();
@@ -1140,6 +1345,7 @@
         return;
       }
       setStatus("wait", `searching ${scoped.length} passages…`);
+      setBar(null); // the engine reports real passes as they land
       const t0 = performance.now();
       // Cross-tab (Phase 14): the background gathers the other tabs' text and merges it
       // into this one request, so ranking happens across everything at once. The timeout
@@ -1150,6 +1356,7 @@
       if (!reply?.ok) {
         const down = reply?.helperDown || /unreachable|not running|fetch/i.test(reply?.error ?? "");
         setStatus("bad", down ? HELP_FIX : `search failed — ${reply?.error ?? "unknown error"}`);
+        setBar(0);
         showResults("");
         return;
       }
@@ -1167,6 +1374,8 @@
       const xtabNote = lastCross?.tabs ? ` · +${lastCross.tabs} tab${lastCross.tabs === 1 ? "" : "s"}${cross.length ? ` (${cross.length})` : ""}` : "";
       statsLine = `${scoped.length} passages · ${count} match${count === 1 ? "" : "es"}${scope ? ` · “${scope}”` : ""}${xtabNote} · ${ms} ms`;
       setStatus(statsKind, statsLine);
+      setBar("done");
+      barDone = true;
       lastSearchKey = key;
       pushHistory(q);
       renderRecent();
@@ -1181,9 +1390,11 @@
       if (o.jump ?? (opts.autoJump !== false && !o.auto)) jumpTo(0);
     } catch (err) {
       setStatus("bad", /timeout/i.test(err?.message ?? "") ? "search timed out — is the helper healthy?" : HELP_FIX);
+      setBar(0);
       showResults("");
     } finally {
       searching = false;
+      if (!barDone) setBar(0); // any path that did not reach "done" clears the track
       if (pendingSearch) {
         pendingSearch = false; // the queued search runs once the current one is done
         const next = pendingOpts;
@@ -1298,6 +1509,17 @@
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "tracky:open") open();
+    // Real progress, not a spinner pretending: the engine reports each pass as it
+    // lands, so the panel can say "pass 2 of 4 · 45/159 passages" and fill the bar.
+    if (msg?.type === "tracky:progress" && visible && searching) {
+      const { chunk, chunks, done, total } = msg;
+      if (Number.isFinite(chunk) && Number.isFinite(chunks) && chunks > 1) {
+        setStatus("wait", `searching — pass ${chunk} of ${chunks} · ${done ?? "?"}/${total ?? "?"} passages…`);
+        setBar(chunk / chunks);
+      } else if (Number.isFinite(total)) {
+        setStatus("wait", `searching ${total} passages…`);
+      }
+    }
     // Cross-tab jump (Phase 14): this tab was opened from another tab's results, so
     // run that question here without the user retyping it.
     if (msg?.type === "tracky:run" && typeof msg.query === "string" && msg.query.trim()) {

@@ -75,6 +75,7 @@ async function buildPage(doc, n, targetWidth) {
   canvas.style.width = `${Math.floor(viewport.width)}px`;
   canvas.style.height = `${Math.floor(viewport.height)}px`;
   canvas.dataset.pending = "1";
+  wrap.dataset.pending = "1"; // the same fact on the wrapper: the stylesheet reads it without :has()
   wrap.appendChild(canvas);
 
   const textLayerDiv = document.createElement("div");
@@ -113,8 +114,10 @@ async function buildPage(doc, n, targetWidth) {
         transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined,
       }).promise;
       delete canvas.dataset.pending; // cleared only on success
+      delete wrap.dataset.pending;
     } catch (err) {
       canvas.dataset.pending = "1"; // stay armed: the next visit tries again
+      wrap.dataset.pending = "1";
       throw err;
     } finally {
       delete canvas.dataset.rendering;
@@ -125,6 +128,7 @@ async function buildPage(doc, n, targetWidth) {
     // 0×0 buffer and the page would stay blank.
     if (canvas.dataset.pending === "1" || canvas.dataset.rendering === "1") return false;
     canvas.dataset.pending = "1";
+    wrap.dataset.pending = "1";
     canvas.width = 0; // release the pixel buffer, keep the layout box
     canvas.height = 0;
     cleanupPage();
@@ -159,7 +163,7 @@ async function buildPage(doc, n, targetWidth) {
 function lazyPaint(pages) {
   let failures = 0;
   const paintSafely = (entry, wrap) => {
-    entry
+    const job = entry
       .paint()
       .then(() => {
         // A page that drifted far away *while it was rendering* is freed now: free()
@@ -173,6 +177,7 @@ function lazyPaint(pages) {
         // be retried forever (the error stays on the wrapper either way).
         if (failures < 3) io.observe(wrap);
       });
+    return job.catch(() => {}); // a settled promise for callers that wait on the first pages
   };
   const isFar = (wrap) => {
     const r = wrap.getBoundingClientRect(); // once per paint, never per scroll
@@ -183,6 +188,7 @@ function lazyPaint(pages) {
       for (const e of entries) {
         if (!e.isIntersecting) continue;
         const wrap = e.target;
+        wrap.dataset.near = "1"; // the sheet shimmer is gated on this: near pages only
         const entry = pages.get(Number(wrap.dataset.page));
         if (entry) paintSafely(entry, wrap);
         io.unobserve(wrap);
@@ -190,9 +196,12 @@ function lazyPaint(pages) {
     },
     { rootMargin: "150% 0px" },
   );
+  const eager = []; // the first sheets: the reader waits for these before it shows
   for (const [n, entry] of pages) {
-    if (n <= 2) paintSafely(entry, entry.wrap);
-    else io.observe(entry.wrap);
+    if (n <= 2) {
+      entry.wrap.dataset.near = "1";
+      eager.push(paintSafely(entry, entry.wrap));
+    } else io.observe(entry.wrap);
   }
 
   // Memory bound: a second observer with a generous margin reports which pages are
@@ -201,6 +210,7 @@ function lazyPaint(pages) {
     (entries) => {
       for (const e of entries) {
         if (e.isIntersecting) continue;
+        delete e.target.dataset.near; // far away: stop the shimmer, it cannot be seen
         const entry = pages.get(Number(e.target.dataset.page));
         if (entry && entry.free()) io.observe(e.target); // re-arm: coming back repaints it
       }
@@ -210,7 +220,7 @@ function lazyPaint(pages) {
   // Observe every page for "far away" — including the first two, which are painted
   // eagerly and would otherwise pin their buffers for the life of the document.
   for (const [, entry] of pages) far.observe(entry.wrap);
-  return io;
+  return { io, eager: Promise.all(eager) };
 }
 
 /** Assemble a page's spans into lines, then lines into paragraph-ish blocks.
@@ -520,7 +530,7 @@ async function main() {
         .catch(() => {}); // and its rejection is handled, never a second unhandled one
       pages.set(n, entry);
       ui.msg.textContent = `page ${n} of ${doc.numPages}`;
-      ui.bar.style.width = `${Math.round((n / doc.numPages) * 100)}%`;
+      ui.bar.style.transform = `scaleX(${(n / doc.numPages).toFixed(4)})`; // compositor-only: no layout per page
       if (blocks.length < MAX_BLOCKS && chars < MAX_CHARS) {
         const room = { blocks: MAX_BLOCKS - blocks.length, chars: MAX_CHARS - chars };
         const pageBlocks = blocksFromPage(entry.wrap, n, registry, seen, sections, skipped, room);
@@ -566,8 +576,7 @@ async function main() {
     spans: skipped.considered, // text-layer spans the collector actually used
     rendering: false, // the stub says true while pdf.js is still working
   };
-  window.__trackyPdfReady = true;
-  window.__trackyPdfStats = stats;
+  // (ready + stats are set below, once the first sheets are actually painted)
   window.__trackyCollect = function collect(opts = {}) {
     const cap = Number.isInteger(opts?.maxBlocks) && opts.maxBlocks > 0 ? Math.min(opts.maxBlocks, MAX_BLOCKS) : MAX_BLOCKS;
     const returned = cap >= blocks.length ? blocks : blocks.slice(0, cap);
@@ -586,7 +595,14 @@ async function main() {
       sections,
     };
   };
-  lazyPaint(pages);
+  const paintWork = lazyPaint(pages);
+
+  // The sheets the reader can see are painted before the overlay lifts: a blank white
+  // page reads as broken, and "ready" should mean "you can read it". Bounded — a slow
+  // or failing paint delays the reveal by at most 1.5 s, it never blocks it.
+  await Promise.race([paintWork.eager, new Promise((r) => setTimeout(r, 1500))]);
+  window.__trackyPdfStats = stats;
+  window.__trackyPdfReady = true;
 
   ui.meta.textContent = `${doc.numPages} page${doc.numPages === 1 ? "" : "s"} · ${blocks.length} passages`;
   ui.load.classList.add("gone");

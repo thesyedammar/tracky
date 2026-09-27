@@ -557,3 +557,33 @@ test("searchText: another 400 keeps its own words and says which kind it was", a
     (e) => e instanceof SearchError && e.status === 502 && /HTTP 400 \(bad_request_body\)/.test(e.message),
   );
 });
+
+test("onProgress reports each pass as it lands, with the real totals", async () => {
+  // Big enough that the request must be split against the model's cap — the same
+  // sizing the panel shows as "pass 2 of 4".
+  const many = Array.from({ length: 400 }, (_, i) => ({ id: `p${i}`, text: `Sentence ${i} about fees and charges. `.repeat(20) }));
+  const seen = [];
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    return response({ answers: allRelevant(body), usage: { input_tokens: 10, output_tokens: 2 } });
+  };
+  const out = await D.searchText({ query: "fees", passages: many }, { config, fetchImpl, onProgress: (p) => seen.push(p) });
+  assert.ok(seen.length >= 2, `expected more than one pass, saw ${seen.length}`);
+  const last = seen[seen.length - 1];
+  assert.equal(last.chunks, seen.length, "chunks = the number of passes actually made");
+  assert.equal(last.chunk, last.chunks, "the last report is the last pass");
+  assert.equal(last.total, out.stats.passages, "total = the passages actually sent");
+  for (let i = 1; i < seen.length; i++) assert.ok(seen[i].done >= seen[i - 1].done, "done never goes backwards");
+  assert.ok(seen.every((p) => p.done <= p.total), "done never exceeds total");
+});
+
+test("onProgress must be a function when given", async () => {
+  await assert.rejects(
+    () =>
+      D.searchText(
+        { query: "q", passages: [{ id: "p0", text: "x" }] },
+        { config, fetchImpl: async () => response({ answers: {} }), onProgress: "nope" },
+      ),
+    /onProgress must be a function/,
+  );
+});

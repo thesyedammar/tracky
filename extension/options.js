@@ -367,6 +367,11 @@ $("dtest").addEventListener("click", async () => {
   }
   note.textContent = "testing the key — one small call…";
   note.className = "muted";
+  // Locked + spinning for the duration: a second click must not spend a second call,
+  // and the wait must be visible rather than a frozen-looking button.
+  const btn = $("dtest");
+  btn.classList.add("busy");
+  btn.disabled = true;
   try {
     if (!DIRECT) {
       note.textContent = "direct.js did not load — reinstall Tracky, then try again.";
@@ -380,6 +385,9 @@ $("dtest").addEventListener("click", async () => {
   } catch (e) {
     note.textContent = `✗ ${e?.message ?? e}`;
     note.className = "warn";
+  } finally {
+    btn.classList.remove("busy");
+    btn.disabled = false;
   }
 });
 

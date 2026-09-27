@@ -301,18 +301,99 @@ async function explainDirectFailure(e, opts) {
 
 /** Run a search. Helper mode relays it to 127.0.0.1:4199; direct mode runs our own
  *  port (direct.js) in this worker. Either way the panel gets the same shape back. */
-async function runSearch({ query, passages }) {
+/** Tell the tab how far a search has come. Fire and forget: a closed tab, a
+ *  reloaded page or a dead port must never turn progress into an error. */
+function notifyProgress(tabId, p) {
+  if (!Number.isFinite(tabId) || !p) return;
+  try {
+    chrome.tabs.sendMessage(tabId, { type: "tracky:progress", ...p }).catch(() => {});
+  } catch {
+    /* no tab to talk to */
+  }
+}
+
+/**
+ * The helper's SSE progress channel (POST /api/search?stream=1): `progress` events
+ * while it sweeps, one `result` event at the end, `error` events for failures.
+ * Returns null when streaming is not available so the caller can use the plain call.
+ * A stream that dies AFTER reporting progress throws — retrying it the plain way
+ * would spend the model twice for one question.
+ */
+async function helperSearchStream(body, onProgress) {
+  let res;
+  try {
+    res = await fetch(`${HELPER}/api/search?stream=1`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(35000),
+    });
+  } catch {
+    return null; // unreachable: the plain path reports it properly
+  }
+  const ctype = res.headers.get("content-type") ?? "";
+  if (!res.ok || !ctype.includes("text/event-stream")) return null;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let result = null;
+  let sawProgress = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf("\n\n")) !== -1) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      const ev = /^event: (.+)$/m.exec(frame)?.[1];
+      const raw = /^data: (.+)$/m.exec(frame)?.[1];
+      if (!ev || !raw) continue;
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        continue; // a frame we cannot read is not a reason to lose the answer
+      }
+      if (ev === "progress") {
+        sawProgress = true;
+        onProgress?.(payload);
+      } else if (ev === "result") {
+        result = payload;
+      } else if (ev === "error") {
+        const e = new Error(payload?.message ?? "search failed");
+        e.status = payload?.status ?? null;
+        e.helperDown = false; // a structured answer means the helper IS running
+        throw e;
+      }
+    }
+  }
+  if (result) return result;
+  if (sawProgress) throw new Error("the helper's stream ended early — try again");
+  return null; // nothing was spent yet: the plain call is safe
+}
+
+async function runSearch({ query, passages }, tabId) {
   const opts = await readOpts();
   if (opts.mode === "direct") {
     // A direct failure is our failure: throw it without the helperDown flag, so the
     // panel shows the message instead of "start your helper".
     try {
-      return await TrackyDirect.searchText({ query, passages }, { config: await directConfig(opts) });
+      return await TrackyDirect.searchText(
+        { query, passages },
+        { config: await directConfig(opts), onProgress: (p) => notifyProgress(tabId, p) },
+      );
     } catch (e) {
       throw await explainDirectFailure(e, opts);
     }
   }
   const source = await chosenSource();
+  // Streaming first: the same call, but the passes come back as they land.
+  const streamed = await helperSearchStream(
+    { query, passages, ...(source ? { provider: source } : {}) },
+    (p) => notifyProgress(tabId, p),
+  );
+  if (streamed) return streamed;
   let res;
   try {
     res = await fetch(`${HELPER}/api/search`, {
@@ -527,10 +608,10 @@ async function searchWithTabs({ query, passages, currentTabId }) {
   const local = Array.isArray(passages) ? passages : [];
   const budget = Math.max(0, HELPER_PASSAGES_MAX - local.length);
   const gathered = await collectFromTabs(currentTabId, budget);
-  if (!gathered.on) return { ...(await runSearch({ query, passages: local })), crossTab: { enabled: false } };
+  if (!gathered.on) return { ...(await runSearch({ query, passages: local }, currentTabId)), crossTab: { enabled: false } };
   if (!gathered.tabs.length) {
     return {
-      ...(await runSearch({ query, passages: local })),
+      ...(await runSearch({ query, passages: local }, currentTabId)),
       crossTab: { enabled: true, tabs: 0, passages: 0, skipped: gathered.skipped, note: gathered.skippedNote },
     };
   }
@@ -628,7 +709,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === "tracky:search") {
     const tabId = _sender?.tab?.id;
-    const run = msg.crossTab && tabId != null ? searchWithTabs({ query: msg.query, passages: msg.passages, currentTabId: tabId }) : runSearch(msg);
+    const run =
+      msg.crossTab && tabId != null
+        ? searchWithTabs({ query: msg.query, passages: msg.passages, currentTabId: tabId })
+        : runSearch(msg, tabId);
     run.then(
       (out) => sendResponse({ ok: true, ...out }),
       (err) => sendResponse({ ok: false, error: err?.message ?? "search failed", status: err?.status ?? null, helperDown: !!err?.helperDown }),

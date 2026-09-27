@@ -459,9 +459,10 @@
    * returns { results, stats: { chunks, requests, passages, ms, usage } }
    */
   async function searchText({ query, passages }, opts = {}) {
-    const { config, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, budgetMs = DEFAULT_BUDGET_MS, rank } = opts;
+    const { config, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, budgetMs = DEFAULT_BUDGET_MS, rank, onProgress } = opts;
     if (!config?.baseUrl || !config?.model || !config?.apiKey) throw new SearchError(NO_KEY, 400);
     if (rank != null && (typeof rank !== "object" || Array.isArray(rank))) throw new SearchError("rank overrides must be an object.", 500);
+    if (onProgress != null && typeof onProgress !== "function") throw new SearchError("onProgress must be a function.", 500);
     if (!Number.isFinite(budgetMs) || budgetMs <= 0) throw new SearchError("budgetMs must be a positive number.", 500);
     const input = validateSearchInput({ query, passages });
     const prepared = preparePassages(input.passages);
@@ -495,7 +496,10 @@
         const { data } = await askJev(body, { config, fetchImpl, timeoutMs: Math.max(1_000, Math.min(timeoutMs, remaining)) });
         usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
         usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
-        return parseJevAnswers(data, chunk);
+        const answered = parseJevAnswers(data, chunk);
+        // Same shape the helper streams: the panel can say "pass 2 of 4" from this.
+        onProgress?.({ done: consumed.length + answered.length, total: prepared.length, chunk: requests, chunks: chunks.length });
+        return answered;
       } catch (e) {
         if (e?.status !== 413 || chunk.length === 1) throw e;
         const mid = Math.ceil(chunk.length / 2);

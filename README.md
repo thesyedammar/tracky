@@ -41,17 +41,19 @@ The trick that makes "never" real: the model is only allowed to **pick** from se
 | `en.wikipedia.org/wiki/Lease` (106–107 passages) | 5 matches · **1.05–1.5 s** |
 | Repeat question (cached) | instant, zero model calls |
 | Scoped search (one section of a page) | 107 → 6 passages searched |
-| Unit tests | **161/161** (`node --test server/test/*.test.mjs extension/direct.test.mjs`) |
+| Unit tests | **175/175** (`node --test server/test/*.test.mjs extension/direct.test.mjs`) |
 | Extension smoke checks | **46/46** on the fixture **and** on Wikipedia |
 | React survival (real React 18 app) | **9/9** — 0 nodes added/removed inside the app's root |
 | Cross-tab search (live, opt-in) | **12/12** — a real search returned a hit from another tab, labelled *In your other tabs* |
-| Direct mode (live, 0.7.0) | **39/39** — key pasted through the real options UI, Test key answered in **579–853 ms**, and a real search returned **7 matches · 465 ms with the helper process STOPPED** (port 4199 confirmed closed); a 107-passage Wikipedia sweep ran the same way (3 matches · 1.2 s); the shipped build without the host permission stops at the gate with the reason, an empty key fails as NO_KEY (400) and a bad one as 401 **with the status crossing the message channel**; the key appeared **nowhere** in the page, panel, options page, console or any zip |
-| PDF mode (two real papers) | 15-page single-column + 16-page two-column (BERT): **33/33** checks · opens in **~1.8 s** · 2,490 spans → 39 passages · every block rebuilt from its own spans (0 mismatches) · **0** blocks stitch two columns · memory bounded (**2 of 16 canvases allocated, ~8 MB**, first page freed and repainted on return) |
+| Direct mode (live, 0.7.0) | **43/43** — key pasted through the real options UI, Test key answered in **579–853 ms**, and a real search returned **7 matches · 465 ms with the helper process STOPPED** (port 4199 confirmed closed); a 107-passage Wikipedia sweep ran the same way (3 matches · 1.2 s); the shipped build without the host permission stops at the gate with the reason, an empty key fails as NO_KEY (400) and a bad one as 401 **with the status crossing the message channel**; the key appeared **nowhere** in the page, panel, options page, console or any zip |
+| PDF mode (two real papers) | 15-page single-column + 16-page two-column (BERT): **34/34** checks · opens in **~1.8 s** · 2,490 spans → 39 passages · every block rebuilt from its own spans (0 mismatches) · **0** blocks stitch two columns · memory bounded (**2 of 16 canvases allocated, ~8 MB**, first page freed and repainted on return) |
 | Hostile text (prompt-injection bait on the page) | **5/5** — the bait cannot inflate its own score |
 | Benchmark through the real model | **8/8** cases · median **481 ms** |
 | Real pages, live | 10 sites × 3 questions · **30 rows, 0 invariant violations** (`docs/verification.md`) |
-| Full battery (`scripts/verify-all.sh`) | **11/11 with the model route live** — 0 failed, 0 blocked, 0 skipped |
+| Full battery (`scripts/verify-all.sh`) | **13/13 with the model route live** — 0 failed, 0 blocked, 0 skipped |
 | Key-leak audit | tree + zip + all 10 commits → **0 leaks** |
+| Panel motion (measured, 0.7.3) | frame deltas sampled on the host page: panel open **median 16.7 ms, 0 frames > 50 ms**; a full real search incl. results render **0 frames > 50 ms** of 3,660 · loading shows skeleton rows + a progress bar driven by the engine's real passes (**\"pass 2 of 4\"**, verified live on the 58-page paper) |
+| Reader reveal (0.7.3) | the first sheets are painted **before** the loading overlay lifts (`__trackyPdfReady` now means *you can read it*): at ready, 2/2 first canvases painted, **0.03 s** measured |
 | Independent judge (Muse Spark 1.3) | every phase accepted, **8.6–9.1 / 10**; the two newest phases scored **9.1** (PDF) and **8.9** (cross-tab) after 5–12 fix rounds each (`docs/judge-report.md`) |
 
 ## What leaves your machine
@@ -79,6 +81,7 @@ page → collect.js   readable blocks + exact char offsets (≤600 blocks, ≤40
 - **Highlighting** uses the CSS Custom Highlight API — it paints a range, it never wraps your text in `<mark>`, so React/Vue pages cannot be disturbed (proven).
 - **Why-chips** are a second pass where the model may only pick one label from our fixed list of eight reasons — an invalid pick is dropped, never guessed.
 - **Hybrid:** exact-word matches are computed locally and merged with meaning matches, deduped by sentence.
+- **Loading is honest:** while a search runs the panel shows skeleton rows and a 3 px bar that fills with the engine's *real* pass progress (helper mode streams it over SSE, direct mode reports it in-process) — never a fake spinner. Motion is transform/opacity only, and `prefers-reduced-motion` keeps the cross-fades while removing movement and loops.
 
 ## Limits (the honest list)
 

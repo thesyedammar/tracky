@@ -4,67 +4,177 @@
 <meta charset="utf-8">
 <title>Tracky — options</title>
 <style>
-  :root { color-scheme: dark; }
+  /* ── Tokens ────────────────────────────────────────────────────────────────
+     The same language as the panel and the PDF reader: two neutrals, one gold
+     accent family, ok/bad. Keep the block in sync when a token changes. */
+  :root {
+    color-scheme: dark;
+    --bg: #0B0F18;
+    --bg-soft: #131824;
+    --surface: rgba(255, 255, 255, .045);
+    --surface-2: rgba(255, 255, 255, .075);
+    --line: rgba(255, 255, 255, .085);
+    --line-2: rgba(255, 255, 255, .16);
+    --ink: #E9EDF5;
+    --ink-2: #AAB3C2;
+    --ink-3: #8E99AC;
+    --gold: #F5C453;
+    --gold-deep: #E19B2C;
+    --ok: #3ECF8E;
+    --bad: #F26D6D;
+    --ring: rgba(245, 196, 83, .68);
+    --e-out: cubic-bezier(.16, 1, .3, 1);
+    --d1: 120ms; --d2: 180ms; --d3: 260ms;
+  }
+  * { box-sizing: border-box; }
   body {
-    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #0E1218; color: #DEE5EF; margin: 0; padding: 40px 20px;
+    font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--ink); margin: 0; padding: 44px 20px 64px;
+    -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 620px; margin: 0 auto; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  h1 .dot { color: #F5C453; }
-  .sub { color: #8A94A6; margin: 0 0 28px; }
+  main { max-width: 640px; margin: 0 auto; }
+  header.top { display: flex; align-items: center; gap: 11px; margin-bottom: 6px; animation: tIn 320ms var(--e-out) both; }
+  .mark {
+    width: 20px; height: 20px; border-radius: 6px; flex: none;
+    background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+    box-shadow: 0 5px 16px rgba(225, 155, 44, .22), inset 0 0 0 1px rgba(255, 255, 255, .16);
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--ink-3); margin: 0 0 30px; animation: tIn 320ms var(--e-out) 40ms both; }
+  /* Sections arrive one after another — the page settles instead of appearing. */
   section {
-    background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .07);
-    border-radius: 14px; padding: 18px 18px 16px; margin-bottom: 16px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; margin-bottom: 14px;
+    animation: tIn 340ms var(--e-out) both;
   }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: #AAB3C2; margin: 0 0 12px; }
-  label.row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; cursor: pointer; }
-  input[type="checkbox"] { width: 16px; height: 16px; accent-color: #F5C453; }
+  section:nth-of-type(1) { animation-delay: 60ms; }
+  section:nth-of-type(2) { animation-delay: 90ms; }
+  section:nth-of-type(3) { animation-delay: 120ms; }
+  section:nth-of-type(4) { animation-delay: 150ms; }
+  section:nth-of-type(5) { animation-delay: 180ms; }
+  section:nth-of-type(6) { animation-delay: 210ms; }
+  @keyframes tIn { from { opacity: 0; transform: translateY(6px); } }
+  h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .7px; color: var(--ink-2); margin: 0 0 13px; font-weight: 650; }
+  label.row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; cursor: pointer; border-radius: 10px; }
+  label.row:last-child { margin-bottom: 0; }
+  input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--gold); margin-top: 2px; flex: none; cursor: pointer; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; }
+  @media (max-width: 580px) { .modes { grid-template-columns: 1fr; } }
+  /* The two ways in, as cards: the chosen one is gold-bordered, no ambiguity. */
+  .mode {
+    display: flex; gap: 10px; padding: 12px; border-radius: 12px; cursor: pointer;
+    background: rgba(255, 255, 255, .02); border: 1px solid var(--line);
+    transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out);
+  }
+  .mode:hover { background: var(--surface-2); transform: translateY(-1px); }
+  .mode:active { transform: translateY(0) scale(.995); }
+  .mode:has(input:checked) { border-color: rgba(245, 196, 83, .5); background: rgba(245, 196, 83, .07); }
+  .mode input[type="radio"] { width: 15px; height: 15px; accent-color: var(--gold); flex: none; margin-top: 3px; cursor: pointer; }
+  .mode .t { font-weight: 600; display: block; margin-bottom: 2px; }
+  .mode .d { color: var(--ink-2); font-size: 12px; line-height: 1.5; }
+  #mode-note { margin: 12px 0 0; }
   textarea {
-    width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical;
-    background: rgba(255, 255, 255, .05); color: #E9EDF5; border: 1px solid rgba(255, 255, 255, .1);
+    width: 100%; min-height: 88px; resize: vertical;
+    background: rgba(255, 255, 255, .04); color: var(--ink); border: 1px solid var(--line);
     border-radius: 10px; padding: 9px 11px; font: 13px/1.5 ui-monospace, monospace;
+    transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), box-shadow var(--d2) var(--e-out);
   }
+  textarea:hover { background: var(--surface-2); }
+  textarea:focus { border-color: rgba(245, 196, 83, .4); box-shadow: 0 0 0 3px rgba(245, 196, 83, .10); outline: none; }
   button {
-    appearance: none; border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .05);
-    color: #DEE5EF; font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 9px; cursor: pointer;
+    appearance: none; border: 1px solid var(--line-2); background: var(--surface);
+    color: var(--ink); font: inherit; font-size: 13px; padding: 7px 13px; border-radius: 9px; cursor: pointer;
+    transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out), color var(--d1) var(--e-out);
   }
-  button:hover { background: rgba(255, 255, 255, .09); }
-  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid rgba(245, 196, 83, .65); outline-offset: 1px; }
-  .muted { color: #8A94A6; font-size: 12px; }
-  .ok { color: #3ECF8E; font-size: 12px; }
-  .warn { color: #F5C453; font-size: 12px; }
-  .kv { display: flex; gap: 8px; align-items: baseline; }
-  .kv b { color: #F5C453; font-variant-numeric: tabular-nums; }
+  button:hover { background: var(--surface-2); }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .75; cursor: default; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible,
+  label.mode:focus-within { outline: 2px solid var(--ring); outline-offset: 1px; }
+  /* Test key: while the one real call is out, the button says so with a turning
+     ring — and locks, so a second click cannot spend a second call. */
+  #dtest { display: inline-flex; align-items: center; gap: 8px; }
+  #dtest.busy {
+    color: var(--ink-2); pointer-events: none;
+    background: rgba(245, 196, 83, .08); border-color: rgba(245, 196, 83, .35);
+  }
+  #dtest.busy::before {
+    content: ""; width: 11px; height: 11px; border-radius: 50%; flex: none;
+    border: 2px solid rgba(245, 196, 83, .25); border-top-color: var(--gold);
+    animation: tSpin 800ms linear infinite;
+  }
+  @keyframes tSpin { to { transform: rotate(360deg); } }
+  .muted { color: var(--ink-3); font-size: 12px; }
+  .ok { color: var(--ok); font-size: 12px; animation: tPop 260ms var(--e-out) both; }
+  .warn { color: var(--gold); font-size: 12px; animation: tPop 260ms var(--e-out) both; }
+  @keyframes tPop { from { opacity: 0; transform: translateY(2px); } }
+  .kv { display: flex; gap: 8px; align-items: center; }
+  .kv b { color: var(--gold); font-variant-numeric: tabular-nums; }
   #helper { display: flex; align-items: center; gap: 9px; }
-  #helper .dot { width: 8px; height: 8px; border-radius: 50%; background: #8A94A6; flex: none; }
-  #helper .dot.ok { background: #3ECF8E; box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
-  #helper .dot.bad { background: #F26D6D; box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
-  code { background: rgba(255, 255, 255, .07); border-radius: 5px; padding: 1px 5px; font: 12px ui-monospace, monospace; }
-  select { background: #171A21; color: #E8ECF3; border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; flex: 1; min-width: 0; }
+  #helper .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none;
+    transition: background var(--d2) var(--e-out), box-shadow var(--d2) var(--e-out);
+  }
+  #helper .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(62, 207, 142, .15); }
+  #helper .dot.bad { background: var(--bad); box-shadow: 0 0 0 3px rgba(242, 109, 109, .15); }
+  code { background: rgba(255, 255, 255, .07); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; font: 12px ui-monospace, monospace; }
+  select {
+    background: var(--bg-soft); color: var(--ink); border: 1px solid var(--line-2);
+    border-radius: 9px; padding: 8px 10px; font: 13px inherit; flex: 1; min-width: 0;
+    transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out);
+  }
+  select:hover { background: #161C29; }
   select:disabled { opacity: .6; }
   input[type="password"], input[type="text"] {
-    background: rgba(255, 255, 255, .05); color: #E9EDF5; border: 1px solid rgba(255, 255, 255, .1);
+    background: rgba(255, 255, 255, .04); color: var(--ink); border: 1px solid var(--line);
     border-radius: 9px; padding: 8px 10px; font: 13px ui-monospace, monospace; flex: 1; min-width: 0;
+    transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), box-shadow var(--d2) var(--e-out);
   }
-  input[type="radio"] { width: 15px; height: 15px; accent-color: #F5C453; flex: none; }
-  #direct { margin: 12px 0 0; padding: 12px 12px 10px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 11px; background: rgba(255, 255, 255, .02); }
+  input[type="password"]:hover, input[type="text"]:hover { background: var(--surface-2); }
+  input[type="password"]:focus, input[type="text"]:focus { border-color: rgba(245, 196, 83, .4); box-shadow: 0 0 0 3px rgba(245, 196, 83, .10); outline: none; }
+  #direct {
+    margin: 14px 0 0; padding: 14px 14px 12px; border: 1px solid var(--line);
+    border-radius: 12px; background: rgba(0, 0, 0, .18);
+    animation: tIn 260ms var(--e-out) both;
+  }
   #direct .row { margin-bottom: 9px; }
-  #direct .kv { margin-top: 2px; align-items: center; }
+  #direct .kv { margin-top: 2px; }
   #direct p { margin: 11px 0 0; }
-  .save { color: #3ECF8E; font-size: 12px; opacity: 0; transition: opacity 160ms ease; }
-  .save.on { opacity: 1; }
+  .save {
+    display: inline-block; color: var(--ok); font-size: 12px; margin-top: 12px;
+    opacity: 0; transform: translateY(3px);
+    transition: opacity var(--d2) var(--e-out), transform var(--d2) var(--e-out);
+  }
+  .save.on { opacity: 1; transform: none; }
+  #meter { display: flex; gap: 26px; align-items: baseline; }
+  #meter .num { font-size: 26px; font-weight: 650; color: var(--gold); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  #meter .lbl { color: var(--ink-3); font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; display: block; margin-top: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    header.top, .sub, section, #direct, #dtest.busy::before { animation: none !important; }
+    .mode, button, textarea, select, input, #helper .dot, .save {
+      transition-property: background-color, border-color, color, opacity, box-shadow !important;
+    }
+    .mode:hover, button:active { transform: none !important; }
+  }
 </style>
 </head>
 <body>
 <main>
-  <h1><span class="dot">◉</span> Tracky options</h1>
+  <header class="top"><span class="mark"></span><h1>Tracky options</h1></header>
   <p class="sub">Ctrl+F that finds by meaning — and quotes the exact sentences it found.</p>
 
   <section>
     <h2>Connect — how Tracky reaches Jev</h2>
-    <label class="row"><input type="radio" name="mode" id="mode-helper" value="helper"> <span><b>Local helper</b> — the key stays in <code>server/.env</code> on this machine, and the panel talks only to 127.0.0.1. <span class="muted">(default)</span></span></label>
-    <label class="row"><input type="radio" name="mode" id="mode-direct" value="direct"> <span><b>Direct</b> — no helper, no Node, no terminal: paste your own Jev key and the extension calls Jev itself.</span></label>
+    <div class="modes">
+      <label class="mode"><input type="radio" name="mode" id="mode-helper" value="helper">
+        <span><span class="t">Local helper <span class="muted">(default)</span></span>
+        <span class="d">The key stays in <code>server/.env</code> on this machine, and the panel talks only to 127.0.0.1.</span></span>
+      </label>
+      <label class="mode"><input type="radio" name="mode" id="mode-direct" value="direct">
+        <span><span class="t">Direct</span>
+        <span class="d">No helper, no Node, no terminal: paste your own Jev key and the extension calls Jev itself.</span></span>
+      </label>
+    </div>
     <p class="muted" id="mode-note" hidden></p>
     <div id="direct" hidden>
       <label class="row" style="gap:10px"><span>Key</span> <input type="password" id="dkey" autocomplete="off" spellcheck="false" placeholder="paste your Jev key"></label>
@@ -106,8 +216,11 @@
 
   <section>
     <h2>Today (IST) — spend meter</h2>
-    <div class="kv"><span>searches</span> <b id="s-count">0</b> <span class="muted">·</span> <span>passages sent</span> <b id="s-pass">0</b></div>
-    <p class="muted" style="margin:10px 0 12px">Counts only — no page text, no queries, no history is stored anywhere.</p>
+    <div id="meter">
+      <span><span class="num" id="s-count">0</span><span class="lbl">searches</span></span>
+      <span><span class="num" id="s-pass">0</span><span class="lbl">passages sent</span></span>
+    </div>
+    <p class="muted" style="margin:12px 0 12px">Counts only — no page text, no queries, no history is stored anywhere.</p>
     <button id="reset" type="button">Reset today's meter</button>
   </section>
 </main>
