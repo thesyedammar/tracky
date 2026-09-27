@@ -23,6 +23,11 @@
   const MAX_BLOCKS = 600; // contract: the extension sends at most 600 passages
   const MAX_CHARS = 400_000;
   const MAX_BLOCK_CHARS = 20_000;
+  /** The contract's hard cap per passage (server/validate.mjs `passageMax`, mirrored in
+   *  extension/direct.js). A block over this used to be sent whole and REFUSED by the
+   *  validator — one long paragraph killed the entire search — so anything longer is
+   *  split at sentence ends before it is sent. */
+  const PASSAGE_MAX = 2200;
 
   /** Concatenate text nodes exactly, recording where each node lands. <br> becomes a synthetic \n. */
   function extractText(root) {
@@ -72,6 +77,53 @@
       segs.push({ ...s, start: a - start, end: b - start, base });
     }
     return { text: text.slice(start, end), segments: segs };
+  }
+
+  /** Split `text` into pieces of ≤ PASSAGE_MAX chars, preferring a sentence end, then a
+   *  space, then a hard cut (for text with no break at all). Offsets stay exact: each
+   *  piece carries its own segment map, rebased onto the piece, so a sentence found in
+   *  piece 3 still highlights the right characters on the page. */
+  function splitForContract(text, segments) {
+    if (text.length <= PASSAGE_MAX) return [{ text, segments, start: 0 }];
+    const pieces = [];
+    let start = 0;
+    while (start < text.length) {
+      let end = Math.min(start + PASSAGE_MAX, text.length);
+      if (end < text.length) {
+        const window = text.slice(start, end);
+        const at = Math.max(
+          window.lastIndexOf(". "),
+          window.lastIndexOf("! "),
+          window.lastIndexOf("? "),
+          window.lastIndexOf(".\n"),
+        );
+        if (at > PASSAGE_MAX / 2) {
+          end = start + at + 1; // keep the full stop with its sentence
+        } else {
+          const sp = window.lastIndexOf(" ");
+          if (sp > 0) end = start + sp; // no sentence break: cut at a space
+        }
+      }
+      if (end <= start) end = Math.min(start + PASSAGE_MAX, text.length); // never stall
+      const raw = text.slice(start, end);
+      const lead = raw.length - raw.trimStart().length;
+      const pieceText = raw.trim();
+      const absStart = start + lead;
+      if (pieceText) {
+        const absEnd = absStart + pieceText.length;
+        const segs = [];
+        for (const s of segments) {
+          const a = Math.max(s.start, absStart);
+          const b = Math.min(s.end, absEnd);
+          if (b <= a) continue;
+          const base = (s.base ?? 0) + (a - s.start);
+          segs.push({ ...s, start: a - absStart, end: b - absStart, base });
+        }
+        pieces.push({ text: pieceText, segments: segs, start: absStart });
+      }
+      start = end;
+    }
+    return pieces;
   }
 
   const visible = (el) => {
@@ -162,19 +214,24 @@
           .map((s) => ({ ...s, end: Math.min(s.end, MAX_BLOCK_CHARS) }))
           .filter((s) => s.start < MAX_BLOCK_CHARS && s.end > s.start);
       }
-      const id = `p${blocks.length}`;
-      blocks.push({ id, text: clippedText });
-      registry.set(id, { element: el, text: clippedText, segments: clippedSegs, section: currentSection });
-      if (currentSection) {
-        const s = sections.find((x) => x.name === currentSection);
-        if (s) s.count++;
-      }
-      stats.chars += clippedText.length;
-      // FNV-1a over every block's text: a cheap content fingerprint so the panel can
-      // tell "same page" from "same size, different content" when keying its cache.
-      for (let i = 0; i < clippedText.length; i++) {
-        hash = (hash ^ clippedText.charCodeAt(i)) >>> 0;
-        hash = Math.imul(hash, 16777619) >>> 0;
+      // Anything still over the contract's cap becomes several passages: one long
+      // paragraph used to be sent whole and fail the whole search at the validator.
+      for (const piece of splitForContract(clippedText, clippedSegs)) {
+        if (blocks.length >= maxBlocks) break;
+        const id = `p${blocks.length}`;
+        blocks.push({ id, text: piece.text });
+        registry.set(id, { element: el, text: piece.text, segments: piece.segments, section: currentSection });
+        if (currentSection) {
+          const s = sections.find((x) => x.name === currentSection);
+          if (s) s.count++;
+        }
+        stats.chars += piece.text.length;
+        // FNV-1a over every block's text: a cheap content fingerprint so the panel can
+        // tell "same page" from "same size, different content" when keying its cache.
+        for (let i = 0; i < piece.text.length; i++) {
+          hash = (hash ^ piece.text.charCodeAt(i)) >>> 0;
+          hash = Math.imul(hash, 16777619) >>> 0;
+        }
       }
     }
 
@@ -182,6 +239,8 @@
     stats.hash = hash;
     stats.ms = Math.round(performance.now() - started);
     window.__trackyBlocks = registry; // handy for debugging; the return value is the contract
+    window.__trackySplitForContract = splitForContract; // same: debug + tests
+    window.__trackyExtractText = extractText; // same: debug + tests
     return { blocks, stats, byId: registry, sections };
   };
 })();

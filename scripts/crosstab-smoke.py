@@ -130,7 +130,7 @@ def main() -> int:
         )
         try:
             worker = None
-            for _ in range(300):
+            for _ in range(600):  # cold Chrome on a swap-full box: 60 s before calling it dead
                 if ctx.service_workers:
                     worker = ctx.service_workers[0]
                     break

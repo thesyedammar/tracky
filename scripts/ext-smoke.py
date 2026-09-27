@@ -148,7 +148,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
     )
     try:
         worker = None
-        for _ in range(300):  # cold Chrome under Xvfb, on a loaded box: allow 30 s before calling it dead
+        for _ in range(600):  # cold Chrome on a swap-full box: 60 s before calling it dead  # cold Chrome under Xvfb: 60 s before calling it dead
             if ctx.service_workers:
                 worker = ctx.service_workers[0]
                 break
@@ -467,7 +467,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         )
         page.keyboard.type("how do i file a tax return for my pet dragon", delay=6)
         page.keyboard.press("Enter")
-        for _ in range(300):
+        for _ in range(600):  # cold Chrome on a swap-full box: 60 s before calling it dead
             text6 = read_status(page)
             if "match" in text6 or "failed" in text6 or "not running" in text6:
                 break
@@ -597,7 +597,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         )
         page.keyboard.type("cancellation", delay=8)
         page.keyboard.press("Enter")
-        for _ in range(300):
+        for _ in range(600):  # cold Chrome on a swap-full box: 60 s before calling it dead
             if "passages ·" in read_status(page):
                 break
             time.sleep(0.1)
@@ -635,7 +635,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         # Rescan forces a fresh pass over a possibly-changed page.
         page.evaluate("() => document.getElementById('tracky-root').shadowRoot.querySelector('#t-rescan').click()")
         rescanned = ""
-        for _ in range(300):
+        for _ in range(600):  # cold Chrome on a swap-full box: 60 s before calling it dead
             rescanned = read_status(page)
             if "ms" in rescanned and "cached" not in rescanned:
                 break

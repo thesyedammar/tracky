@@ -305,7 +305,7 @@ def phase_a_shipped(pw, profile: str, page_url: str) -> None:
         ctx.close()
 
 
-def phase_b_granted(pw, profile: str, page_url: str, query: str, key: str) -> None:
+def phase_b_granted(pw, profile: str, page_url: str, query: str, key: str, fixture_url: str | None = None) -> None:
     """The accepted state: paste the key in the real UI, test it, then search with the
     helper STOPPED — direct mode's entire reason to exist."""
     print("\nB. the granted build (host permission on the same code)")
@@ -437,6 +437,42 @@ def phase_b_granted(pw, profile: str, page_url: str, query: str, key: str) -> No
             f"{len(chips)} chip(s): " + "; ".join(chips)[:80],
         )
 
+        # --- a page whose paragraph is over the contract cap -------------------------
+        # One long paragraph used to fail the WHOLE search ("A passage is over 2200
+        # characters"). The collector now splits it at sentence ends; both halves are
+        # proven here — the collected passages, and a real search on that page.
+        if fixture_url:
+            page2 = ctx.new_page()
+            page2.goto(fixture_url, wait_until="load")
+            page2.wait_for_timeout(400)
+            page2.add_script_tag(path=str(EXT / "collect.js"))
+            sizes = page2.evaluate(
+                "() => window.__trackyCollect({ maxBlocks: 600, maxChars: 400000 }).blocks.map((b) => b.text.length)"
+            )
+            check(
+                "B: a page with a 3,300-char paragraph collects nothing over the cap",
+                bool(sizes) and max(sizes) <= 2200,
+                f"{len(sizes)} passage(s) · largest {max(sizes) if sizes else 0} chars",
+            )
+            page2.bring_to_front()
+            time.sleep(0.3)
+            check("B: the OS-level Alt+K gesture reached Chrome (long-paragraph page)", press_shortcut())
+            time.sleep(1.2)
+            out2 = run_panel_search(page2, "late entry fee")
+            check(
+                "B: that page searches for real — no 'over 2200' failure",
+                "over 2200" not in out2["status"]
+                and re.match(r"^\d+ passages · \d+ match", out2["status"]) is not None
+                and out2["hits"] >= 1,
+                out2["status"][:90],
+            )
+            check(
+                "B: its hit is highlighted on the page too",
+                out2["highlights"]["all"] >= 1,
+                f"all={out2['highlights']['all']} now={out2['highlights']['now']}",
+            )
+            page2.close()
+
         # --- the BLOCKED-vs-FAIL rule rides on the status, not on the wording ---------
         # A rejected key must cross the message channel as status 401, not only as a
         # sentence: the suites (and any future UI) decide from the status. Throwaway key,
@@ -553,7 +589,8 @@ def main() -> int:
             with tempfile.TemporaryDirectory(prefix="tracky-direct-a-") as profile_a:
                 phase_a_shipped(pw, profile_a, url)
             with tempfile.TemporaryDirectory(prefix="tracky-direct-b-") as profile_b:
-                phase_b_granted(pw, profile_b, url, query, key)
+                fixture_url = f"http://127.0.0.1:{httpd.server_address[1]}/long-paragraph.html" if httpd else None
+                phase_b_granted(pw, profile_b, url, query, key, fixture_url)
     finally:
         if httpd:
             httpd.shutdown()

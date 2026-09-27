@@ -28,6 +28,10 @@ Rules:
 
 - `query`: 1–1,000 chars.
 - `passages`: 1–600 items; each `text` <= 2,200 chars; combined <= ~400k chars.
+  The collector keeps that promise: a page block longer than 2,200 chars is **split
+  at sentence ends** into several passages (offsets stay exact, so highlights still
+  land on the right characters). It is never silently dropped, and the validator
+  still refuses anything over the cap — one long paragraph must not fail a search.
   Long pages are sent **whole** — the server chunks internally (the "full-page sweep"). Clients do NOT chunk.
 - `id`: stable for the session; used to map results back to the page.
 - `provider` (optional): which configured Jev source to use, from `GET /api/providers`.

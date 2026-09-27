@@ -1,15 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "Tracky — search pages by meaning",
-  "version": "0.7.0",
-  "description": "Ctrl+F that finds by meaning, not letters — and quotes the exact sentences it found. Local helper or direct; your key stays yours.",
+  "name": "Tracky \u2014 search pages by meaning",
+  "version": "0.7.1",
+  "description": "Ctrl+F that finds by meaning, not letters \u2014 and quotes the exact sentences it found. Local helper or direct; your key stays yours.",
   "minimum_chrome_version": "105",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "optional_host_permissions": ["https://opencode.ai/*", "http://*/*", "https://*/*"],
-  "background": { "service_worker": "background.js" },
-  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://opencode.ai/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "action": {
-    "default_title": "Tracky — search this page by meaning (Alt+K)",
+    "default_title": "Tracky \u2014 search this page by meaning (Alt+K)",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -25,7 +38,9 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+K" }
+      "suggested_key": {
+        "default": "Alt+K"
+      }
     }
   }
 }
