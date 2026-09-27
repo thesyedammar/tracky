@@ -17,7 +17,7 @@ import * as pdfjsLib from "./vendor/pdfjs/pdf.min.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/pdf.worker.min.mjs");
 
 const MIN_BLOCK_CHARS = 40;
-const MAX_BLOCKS = 600;
+const MAX_BLOCKS = Number(window.__trackyMaxBlocks) || 600; // set by pdf-stub.js, loaded first
 const MAX_CHARS = 400_000;
 // One block = one comfortable paragraph-ish chunk. A PDF line is a text item, not a
 // paragraph, so blocks are assembled from consecutive spans until the layout says
@@ -127,28 +127,37 @@ async function buildPage(doc, n, targetWidth) {
     canvas.dataset.pending = "1";
     canvas.width = 0; // release the pixel buffer, keep the layout box
     canvas.height = 0;
-    // And hand the page's parsed operators back to pdf.js: a far-away page needs its
-    // text layer (kept in the DOM) but not its render resources. paint() re-fetches.
-    if (livePage?.cleanup) {
-      const p = livePage;
-      livePage = null;
-      try {
-        // pdf.js returns undefined here in this build — never assume a promise.
-        const maybe = p.cleanup();
-        if (maybe && typeof maybe.catch === "function") maybe.catch(() => {});
-      } catch {
-        /* a cleanup failure is never a page failure */
-      }
-    }
+    cleanupPage();
     return true;
   };
-  return { wrap, paint, free };
+  // Hand the page's parsed operators back to pdf.js: a far-away page needs its text
+  // layer (kept in the DOM) but not its render resources. paint() re-fetches. Called
+  // even when a canvas was never painted, so a timed-out page cannot leak operators.
+  const cleanupPage = () => {
+    if (!livePage?.cleanup) return;
+    const p = livePage;
+    livePage = null;
+    try {
+      // pdf.js returns undefined here in this build — never assume a promise.
+      const maybe = p.cleanup();
+      if (maybe && typeof maybe.catch === "function") maybe.catch(() => {});
+    } catch {
+      /* a cleanup failure is never a page failure */
+    }
+  };
+  const dispose = () => {
+    canvas.width = 0;
+    canvas.height = 0;
+    cleanupPage();
+  };
+  return { wrap, paint, free, dispose };
 }
 
 /** Render canvases as the reader approaches them, and release the ones left far
  *  behind — so a 300-page document never sits on hundreds of megabytes of pixels.
  *  Released pages repaint when the reader comes back (the observer is re-armed). */
 function lazyPaint(pages) {
+  let failures = 0;
   const paintSafely = (entry, wrap) => {
     entry
       .paint()
@@ -159,7 +168,10 @@ function lazyPaint(pages) {
       })
       .catch((err) => {
         wrap.dataset.paintError = String(err?.message ?? err); // visible to tests, never silent
-        io.observe(wrap); // re-arm: the next visit to this page tries again
+        failures++;
+        // Re-arm, but only while it looks transient: a permanently broken page must not
+        // be retried forever (the error stays on the wrapper either way).
+        if (failures < 3) io.observe(wrap);
       });
   };
   const isFar = (wrap) => {
@@ -235,10 +247,10 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
   const items = spans.map((span) => {
     const sl = num(span.style.left);
     const st = num(span.style.top);
-    // One measured read per span, in a single synchronous pass with no writes in
-    // between: the layout flushes once for the page, not once per span. A measured
-    // width is what keeps run-splitting correct on condensed or expanded fonts, where
-    // an estimate would merge columns or split words.
+    // Reads are grouped into a few passes with no writes between them, so the layout
+    // flushes at most once per pass. A measured width is what keeps run-splitting
+    // correct on condensed or expanded fonts, where an estimate would merge columns or
+    // split words.
     const rect = span.getBoundingClientRect();
     const size = num(span.style.fontSize) ?? 12;
     return {
@@ -405,6 +417,8 @@ function blocksFromPage(wrap, n, registry, seen, sections, skipped, room) {
       // word may have been split. Inside a line, "well-known" keeps its hyphen.
       const isLineStart = it === ln.items[0];
       const prevEndsHyphen = isLineStart && /\p{L}-$/u.test(text) && /^\p{L}/u.test(it.data);
+      // A block boundary forced by CHUNK_MAX_CHARS keeps the hyphen: the word was not
+      // split in the source, and the two blocks are separate answers.
       let start;
       if (!text.length) {
         start = 0;
@@ -499,7 +513,7 @@ async function main() {
           // A page that arrives after its deadline is cleaned up rather than left in
           // the DOM as an orphan nobody tracks.
           if (late && !pages.has(n)) {
-            late.free();
+            late.dispose(); // unconditional: a timed-out page must not leak operators
             late.wrap.remove();
           }
         })

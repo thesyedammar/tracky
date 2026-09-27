@@ -6,11 +6,15 @@
 // crash. pdf-viewer.js replaces it with the real collector once pages are up, and
 // the shape here is deliberately identical to collect.js (same keys, same stats
 // fields, same maxBlocks option) so nothing downstream can tell the difference.
+// The collector's document cap, defined once here because this file is loaded before
+// pdf-viewer.js — the real collector reads it instead of keeping its own copy.
+window.__trackyMaxBlocks = 600;
+
 window.__trackyPdfReady = false;
 window.__trackyCollect = function collectStub(opts = {}) {
   // Same clamp as the real collector, so identical calls return identical stats.
   const raw = opts?.maxBlocks;
-  const cap = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 600) : 600;
+  const cap = Number.isInteger(raw) && raw > 0 ? Math.min(raw, window.__trackyMaxBlocks) : window.__trackyMaxBlocks;
   return {
     blocks: [],
     stats: {
