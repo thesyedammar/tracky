@@ -537,13 +537,17 @@
     lastResults = [...literal, ...meaning];
     lastQuery = query;
     const crossHits = Array.isArray(cross?.results) ? cross.results : [];
-    if (!lastResults.length && !crossHits.length) {
-      currentHit = -1; // nothing to walk, and no stale strong mark left behind
+    if (!lastResults.length) {
+      // Nothing local to mark: drop both layers even when other tabs have quotes —
+      // a stale mark from the previous question would be a lie.
+      currentHit = -1;
       clearHighlight();
-      showResults(
-        `<div class="empty">No meaning matches for “${esc(query)}”.<div class="tip">Tracky only quotes sentences that already exist on this page — try rephrasing the question.</div></div>`,
-      );
-      return;
+      if (!crossHits.length) {
+        showResults(
+          `<div class="empty">No meaning matches for “${esc(query)}”.<div class="tip">Tracky only quotes sentences that already exist on this page — try rephrasing the question.</div></div>`,
+        );
+        return;
+      }
     }
     const parts = [];
     // The find bar sits on top so Enter/Shift+Enter (and these chevrons) can walk the
@@ -589,6 +593,7 @@
     // Every local match gets its faint mark straight away (Ctrl+F paints as you type);
     // the strong mark and the counter wait for Enter, so typing never yanks the page.
     currentHit = -1;
+    paintNow(null); // a fresh list starts with no current match
     highlightAll();
     renderCounter();
   }
@@ -777,20 +782,27 @@
   const MAX_PAINTED = 200; // paint cost guard: the list itself still shows every hit
   let currentHit = -1;
 
+  /** The Range for one hit, or null — a single derivation for painting and jumping. */
+  function rangeForHit(r) {
+    if (!r) return null;
+    const block = lastById?.get(r.passageId);
+    if (!block?.element?.isConnected) return null;
+    const pos =
+      Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
+        ? r.offset
+        : block.text.indexOf(r.sentence);
+    if (pos < 0) return null;
+    const range = rangeFor(block, pos, r.sentence.length);
+    return range && !range.collapsed ? range : null;
+  }
+
   /** Paint every local hit's exact sentence, faintly — the page shows what you found. */
   function highlightAll() {
     if (!lastResults?.length || !lastById) return;
     const ranges = [];
     for (const r of lastResults) {
-      const block = lastById.get(r.passageId);
-      if (!block?.element?.isConnected) continue;
-      const pos =
-        Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
-          ? r.offset
-          : block.text.indexOf(r.sentence);
-      if (pos < 0) continue;
-      const range = rangeFor(block, pos, r.sentence.length);
-      if (range && !range.collapsed) ranges.push(range);
+      const range = rangeForHit(r);
+      if (range) ranges.push(range);
       if (ranges.length >= MAX_PAINTED) break;
     }
     try {
@@ -821,23 +833,6 @@
     renderCounter();
   }
 
-  /** Move the strong mark to hit `index` (used when the caller has no range handy). */
-  function markCurrent(index) {
-    const r = lastResults?.[index];
-    const block = r ? lastById?.get(r.passageId) : null;
-    if (!r || !block?.element?.isConnected) {
-      paintNow(null);
-      setCurrent(index);
-      return;
-    }
-    const pos =
-      Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
-        ? r.offset
-        : block.text.indexOf(r.sentence);
-    paintNow(pos >= 0 ? rangeFor(block, pos, r.sentence.length) : null);
-    setCurrent(index);
-  }
-
   function renderCounter() {
     const box = resultsEl.querySelector(".count");
     if (!box) return;
@@ -848,13 +843,17 @@
     box.hidden = total === 0;
   }
 
-  /** Next / previous match, wrapping — the Enter and Shift+Enter keys. */
+  /** Next / previous match, wrapping — the Enter and Shift+Enter keys. A hit whose
+   *  block left the page must not trap Enter: the walk steps over it, once around. */
   function cycleMatch(step) {
     const total = lastResults?.length ?? 0;
     if (!total) return false;
-    const next = currentHit < 0 ? 0 : (currentHit + step + total) % total;
-    jumpTo(next);
-    return true;
+    let i = currentHit < 0 ? 0 : (currentHit + step + total) % total;
+    for (let tried = 0; tried < total; tried++) {
+      if (jumpTo(i)) return true;
+      i = (i + step + total) % total;
+    }
+    return false;
   }
 
   const flashTimers = new WeakMap();
@@ -923,24 +922,20 @@
 
   function jumpTo(index) {
     const r = lastResults[index];
-    if (!r) return;
+    if (!r) return false;
     const block = lastById?.get(r.passageId);
     if (!block || !block.element?.isConnected) {
       showStatusBriefly("bad", "that sentence is no longer on this page");
-      return;
+      return false;
     }
-    // The validator guarantees the sentence is an exact substring of the block text.
-    const pos =
-      Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
-        ? r.offset
-        : block.text.indexOf(r.sentence);
-    if (pos < 0) {
-      showStatusBriefly("bad", "could not locate that sentence — the page may have changed");
-      return;
-    }
+    // The validator guarantees the sentence is an exact substring of the block text, so
+    // a null range here means the page changed under us — say so rather than pretend.
     const styled = pageStyleReady(); // cached: false when a page CSP blocks our rules
-    let range = rangeFor(block, pos, r.sentence.length);
-    if (range?.collapsed) range = null; // a zero-length mark would be a lie
+    const range = rangeForHit(r);
+    if (!range) {
+      showStatusBriefly("bad", "could not locate that sentence — the page may have changed");
+      return false;
+    }
     const highlightOk = paintNow(range);
     const el = block.element;
     // Land the block instantly (works for window and inner scroll containers),
@@ -967,6 +962,7 @@
     for (const h of resultsEl.querySelectorAll(".hit")) h.classList.toggle("selected", Number(h.dataset.index) === index);
     setCurrent(index); // the range is already painted above — no second derivation
     showStatusBriefly("ok", marked ? "showing that sentence on the page" : "showing the paragraph — that sentence couldn't be marked");
+    return true;
   }
 
   async function copyQuote(index, xindex) {

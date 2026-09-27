@@ -510,3 +510,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Empty-result path does not reset currentHit or NOW layer, leaving stale selection state
   - autoJump default is implicit via !==false and missing from initial opts, fragile and undocumented
   - Redundant HL_NOW writes and per-jump ensurePageStyle lookup plus double scroll work
+
+### Find-bar behaviour (Phase 7 extension, loop 2) — 8.6/10 🟢
+- 27 Sept 2026, 10:06 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/content.js, extension/options.js, extension/options.html, scripts/ext-smoke.py, scripts/pdf-smoke.py, scripts/realpage-suite.py
+- correctness **8.2** · craft **8.4** · robustness **8.5** · performance **9** · polish **8.8**
+- top fixes:
+  - Clear faint layer when local results are empty but cross-tab hits exist — early-clear only runs when both are empty so stale HL_NAME marks survive
+  - Advance currentHit/counter on missing-block jump failure — jumpTo returns early without setCurrent so Enter retries the same dead index forever
+  - Remove dead markCurrent — unused second range-derivation path contradicts one-paint-path claim
+  - Deduplicate block.offset-to-Range lookup triplicated in highlightAll/jumpTo/markCurrent into one helper
+  - Ensure highlightAll clears stale HL_NOW when re-rendering before first jump, not only via runSearch pre-clear
