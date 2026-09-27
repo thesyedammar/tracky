@@ -8,7 +8,7 @@
 // the key never appears in any response, log line, or error message.
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
-import { loadEnv } from "./env.mjs";
+import { loadEnv, envSuffix } from "./env.mjs";
 import { searchText } from "./search.mjs";
 import { whyFor, validateWhyInput } from "./why.mjs";
 import { validateSearchInput, SearchError, LIMITS } from "./validate.mjs";
@@ -110,6 +110,40 @@ function readBody(req, res, cap, timeoutMs) {
 }
 
 /**
+ * The Jev source a request asked for, or the helper's default. Unknown ids and
+ * key-less sources fail loudly with a message that says exactly what to fix —
+ * a dropdown typo must never turn into a silent wrong-route search.
+ */
+function pickProvider(config, wanted) {
+  const providers = config.providers ?? [];
+  const asked = wanted == null ? "" : String(wanted).trim().toLowerCase();
+  if (!asked) {
+    const d = providers.find((p) => p.id === config.defaultId);
+    if (d && !d.configured) {
+      // The default source lost its key: say so, instead of sending an empty key upstream.
+      throw new SearchError(
+        `The default source "${d.id}" has no key right now — add JEV_PROVIDER_${envSuffix(d.id)}_KEY to server/.env, or pick another source.`,
+        503,
+      );
+    }
+    return d
+      ? { id: d.id, baseUrl: d.baseUrl, model: d.model, apiKey: d.apiKey }
+      : { id: "default", baseUrl: config.baseUrl, model: config.model, apiKey: config.apiKey };
+  }
+  const id = asked;
+  const p = providers.find((x) => x.id === id);
+  if (!p) {
+    const names = providers.map((x) => x.id).join(", ") || "default";
+    throw new SearchError(`Unknown source "${String(wanted).slice(0, 40)}" — this helper offers: ${names}.`, 400);
+  }
+  if (!p.configured) {
+    const envName = `JEV_PROVIDER_${envSuffix(id)}_KEY`;
+    throw new SearchError(`The source "${id}" has no key yet — add ${envName} to server/.env and restart the helper.`, 503);
+  }
+  return { id: p.id, baseUrl: p.baseUrl, model: p.model, apiKey: p.apiKey };
+}
+
+/**
  * Build the helper server. `config` is the Jev config from loadEnv(); `fetchImpl`
  * is injectable so tests drive the whole pipeline with a fake Jev.
  */
@@ -155,7 +189,22 @@ export function createHelperServer({
           name: NAME,
           version: VERSION,
           model: config.model,
+          defaultSource: config.defaultId ?? "default",
           caps: { bodyKB: BODY_CAP / 1024, passages: LIMITS.passagesMax, batch: BATCH_MAX },
+        });
+      }
+
+      // The dropdown's source list: labels and models only — never a key.
+      if (path === "/api/providers" && req.method === "GET") {
+        return sendJson(res, 200, {
+          default: config.defaultId ?? "default",
+          providers: (config.providers ?? []).map(({ id, label, kind, model, configured }) => ({
+            id,
+            label,
+            kind,
+            model,
+            configured,
+          })),
         });
       }
 
@@ -181,6 +230,7 @@ export function createHelperServer({
           throw new SearchError("Malformed JSON body.", 400);
         }
         const input = validateSearchInput(body);
+        const source = pickProvider(config, body.provider);
 
         // Optional redact mode: same-length masking, offsets stay exact.
         let passages = input.passages;
@@ -201,13 +251,14 @@ export function createHelperServer({
           const bodies = [];
           for (let i = 0; i < prepared.length; i += BATCH_MAX) {
             const chunk = prepared.slice(i, i + BATCH_MAX);
-            bodies.push(buildRequest({ query: input.query, passages: chunk, model: config.model }));
+            bodies.push(buildRequest({ query: input.query, passages: chunk, model: source.model }));
           }
           const bytes = Buffer.byteLength(JSON.stringify(bodies));
-          log(`POST /api/preview → 200 · ${prepared.length} passages · ${bodies.length} chunk${bodies.length > 1 ? "s" : ""} · ${bytes} B${redactNote} · ${Date.now() - started} ms`);
+          log(`POST /api/preview → 200 · source ${source.id} · ${prepared.length} passages · ${bodies.length} chunk${bodies.length > 1 ? "s" : ""} · ${bytes} B${redactNote} · ${Date.now() - started} ms`);
           return sendJson(res, 200, {
             ok: true,
-            model: config.model,
+            model: source.model,
+            source: source.id,
             auth: "Bearer •••", // the key itself is never echoed
             stats: { passages: prepared.length, chunks: bodies.length, bytes },
             chunks: bodies,
@@ -221,7 +272,7 @@ export function createHelperServer({
           const { results, stats } = await searchText(
             { query: input.query, passages },
             {
-              config,
+              config: { baseUrl: source.baseUrl, model: source.model, apiKey: source.apiKey },
               fetchImpl,
               signal: controller.signal,
               onProgress: (p) => {
@@ -236,19 +287,19 @@ export function createHelperServer({
           );
           if (res.destroyed) {
             // Results are ready but the client is gone — say so instead of logging a 200 nobody received.
-            log(`POST /api/search → 499 cancelled (client disconnected before delivery)${redactNote} · ${stats.ms} ms`);
+            log(`POST /api/search → 499 cancelled (client disconnected before delivery) · source ${source.id}${redactNote} · ${stats.ms} ms`);
             return;
           }
-          const okLine = `POST /api/search → 200 · ${stats.passages} passages · ${results.length} results · ${stats.chunks} pass${stats.chunks > 1 ? "es" : ""}${redactNote} · ${stats.ms} ms · tokens ${stats.usage.input_tokens}/${stats.usage.output_tokens}`;
+          const okLine = `POST /api/search → 200 · source ${source.id} · ${stats.passages} passages · ${results.length} results · ${stats.chunks} pass${stats.chunks > 1 ? "es" : ""}${redactNote} · ${stats.ms} ms · tokens ${stats.usage.input_tokens}/${stats.usage.output_tokens}`;
           if (wantsStream) {
             // Log the 200 only once the result frame has actually flushed; async failures log 499.
             try {
               res.write(`event: result\ndata: ${JSON.stringify({ results, stats })}\n\n`, (err) => {
-                log(err ? `POST /api/search → 499 cancelled (client disconnected mid-delivery)${redactNote} · ${stats.ms} ms` : `${okLine} · sse`);
+                log(err ? `POST /api/search → 499 cancelled (client disconnected mid-delivery) · source ${source.id}${redactNote} · ${stats.ms} ms` : `${okLine} · sse`);
               });
               res.end();
             } catch {
-              log(`POST /api/search → 499 cancelled (client disconnected mid-delivery)${redactNote} · ${stats.ms} ms`);
+              log(`POST /api/search → 499 cancelled (client disconnected mid-delivery) · source ${source.id}${redactNote} · ${stats.ms} ms`);
             }
           } else {
             sendJson(res, 200, { results, stats });
@@ -258,7 +309,7 @@ export function createHelperServer({
         } catch (err) {
           const status = err instanceof SearchError ? err.status : 500;
           if (status === 499 || res.destroyed || controller.signal.aborted) {
-            log(`POST /api/search → 499 cancelled (client disconnected)${redactNote} · ${Date.now() - started} ms`);
+            log(`POST /api/search → 499 cancelled (client disconnected) · source ${source.id}${redactNote} · ${Date.now() - started} ms`);
             if (!res.destroyed) {
               try {
                 res.end();
@@ -282,6 +333,7 @@ export function createHelperServer({
           throw new SearchError("Malformed JSON body.", 400);
         }
         const input = validateWhyInput(body);
+        const source = pickProvider(config, body.provider);
 
         // Same privacy rule as search: page text is masked before it leaves.
         let matches = input.matches;
@@ -300,20 +352,23 @@ export function createHelperServer({
         const controller = new AbortController();
         res.on("close", () => controller.abort(new Error("client disconnected")));
         try {
-          const { reasons, stats } = await whyFor({ query: input.query, matches }, { config, fetchImpl, signal: controller.signal });
+          const { reasons, stats } = await whyFor(
+            { query: input.query, matches },
+            { config: { baseUrl: source.baseUrl, model: source.model, apiKey: source.apiKey }, fetchImpl, signal: controller.signal },
+          );
           if (res.destroyed) {
-            log(`POST /api/why → 499 cancelled (client disconnected)${redactNote} · ${stats.ms} ms`);
+            log(`POST /api/why → 499 cancelled (client disconnected) · source ${source.id}${redactNote} · ${stats.ms} ms`);
             return;
           }
           sendJson(res, 200, { reasons, stats });
           log(
-            `POST /api/why → 200 · ${reasons.length} matches · ${reasons.filter((r) => r.reason).length} chips${redactNote} · ${stats.ms} ms · tokens ${stats.usage.input_tokens}/${stats.usage.output_tokens}`,
+            `POST /api/why → 200 · source ${source.id} · ${reasons.length} matches · ${reasons.filter((r) => r.reason).length} chips${redactNote} · ${stats.ms} ms · tokens ${stats.usage.input_tokens}/${stats.usage.output_tokens}`,
           );
           return;
         } catch (err) {
           const status = err instanceof SearchError ? err.status : 500;
           if (status === 499 || res.destroyed || controller.signal.aborted) {
-            log(`POST /api/why → 499 cancelled (client disconnected)${redactNote}`);
+            log(`POST /api/why → 499 cancelled (client disconnected) · source ${source.id}${redactNote} · ${Date.now() - started} ms`);
             if (!res.destroyed) {
               try {
                 res.end();

@@ -520,3 +520,33 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Remove dead markCurrent — unused second range-derivation path contradicts one-paint-path claim
   - Deduplicate block.offset-to-Range lookup triplicated in highlightAll/jumpTo/markCurrent into one helper
   - Ensure highlightAll clears stale HL_NOW when re-rendering before first jump, not only via runSearch pre-clear
+
+### Source picker (JEV_PROVIDERS) — 8.3/10 🟡
+- 27 Sept 2026, 10:46 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js, extension/options.html, extension/background.js, scripts/source-picker-smoke.py, docs/contract.md
+- correctness **7.6** · craft **8.7** · robustness **7.8** · performance **9** · polish **8.6**
+- top fixes:
+  - Offline wipes persisted source: save() reads empty disabled select as null; preserve stored source when providers list unavailable
+  - Own-key rule is override-presence not host-compare: same-URL BASE_URL override incorrectly forces configured:false; compare normalized hosts
+  - Saved but unconfigured id stays selected and is sent to get 503; fall back to default and prevent selecting disabled options
+  - Log coverage incomplete: 499/cancelled and early 400/503 paths lack 'source <id>' the spec requires on log lines
+  - Input normalization gaps: whitespace-only provider should be default, duplicate ids not deduped, values/kind not trimmed/normalized, normalization regex duplicated
+
+### Source picker (JEV_PROVIDERS, loop 2) — 8.1/10 🟡
+- 27 Sept 2026, 10:51 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js
+- correctness **7.7** · craft **8.2** · robustness **8.4** · performance **9** · polish **8**
+- top fixes:
+  - /api/why aborted 499 log line omits 'source <id>' — spec fix (4) incomplete vs search lines and sibling why line
+  - id→env-stem regex duplicated inline in server.mjs pickProvider instead of reusing/exporting envSuffix one-helper
+  - saved-unknown-id vs no-key conflated in warn note; whitespace-only _LABEL trims to empty label instead of falling back to id
+  - why 499 aborted line also drops ms timing, inconsistent with all other 499/200 lines
+  - saved source compare is case-sensitive with no trim/lower normalization before match
+
+### Source picker (JEV_PROVIDERS, loop 3) — 8.4/10 🟡
+- 27 Sept 2026, 10:55 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js
+- correctness **8.4** · craft **8.9** · robustness **8.2** · performance **9.1** · polish **8.6**
+- top fixes:
+  - default path in pickProvider returns unconfigured default with empty apiKey instead of 503 — explicit ids check configured but implicit default does not
+  - loadEnv returns untrimmed baseUrl/model/apiKey while resolveProviders trims — health and fallback config can show/use spaced values
+  - envSuffix collision not guarded: zen-paid vs zen_paid dedupe by id but share JEV_PROVIDER_ZEN_PAID_* env vars
+  - options warn for unknown id shows raw String(saved).slice(0,40) with whitespace instead of normalized want; change listener added inside loadSources risks duplicates on re-call
+  - kind inference defaults empty model to paid and substring /free/i can mislabel e.g. freebird; unconfigured provider should be kind-agnostic or unknown

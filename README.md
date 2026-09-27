@@ -50,6 +50,7 @@ The trick that makes "never" real: the model is only allowed to **pick** from se
 - The API key lives **only** in `server/.env` (chmod 600, gitignored). It is never sent to the extension, never logged, never committed — `scripts/key-leak-check.mjs` proves it across the working tree, the packaged zip and every commit.
 - **Redact mode** masks phone numbers, emails, cards, PANs and similar PII with same-length `•` *before* the text leaves, so offsets and highlights still line up.
 - **Per-site deny list** in the options page — listed sites never even get the panel injected.
+- **Pick your Jev source** in the options page: whatever you configure in `server/.env` (`JEV_PROVIDERS`) shows up as a dropdown — opencode Zen's paid `jev-1.13`, its free-window `jev-1.13-free`, or your own TypeSafe key. The extension only ever sends the *id*; keys never leave the helper. A source with no key shows as "no key yet" and cannot be picked.
 - A local **spend meter** counts searches and passages per day (IST). It is a counter, not a log.
 
 ## How it works

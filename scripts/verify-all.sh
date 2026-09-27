@@ -57,6 +57,7 @@ run "helper health"         0 bash -c 'curl -sf http://127.0.0.1:4199/api/health
 run "pdf mode (34 checks)"  0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-smoke.py
 run "extension smoke (fixture)" 0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
 run "extension smoke (wikipedia)" 0 env TRACKY_SMOKE_URL="https://en.wikipedia.org/wiki/Lease" TRACKY_SMOKE_QUERY="security deposit" xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
+run "source picker"          0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/source-picker-smoke.py
 run "react survival"        0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/react-survival.py
 run "hostile text"          1 node scripts/hostile-text.mjs
 run "benchmark suite"       1 node scripts/benchmark.mjs

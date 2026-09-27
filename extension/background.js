@@ -216,14 +216,23 @@ async function checkHealth() {
   return { name: body.name, version: body.version, model: body.model, caps: body.caps };
 }
 
+/** The Jev source picked in options, or null for the helper's default. Only the
+ *  id travels — the keys stay in the helper's .env, as always. */
+async function chosenSource() {
+  const v = await chrome.storage.local.get({ trackyOpts: null });
+  const s = v?.trackyOpts?.source;
+  return typeof s === "string" && s ? s : null;
+}
+
 /** Relay a search to the helper. The page text goes page → here → helper, nothing else. */
 async function runSearch({ query, passages }) {
+  const source = await chosenSource();
   let res;
   try {
     res = await fetch(`${HELPER}/api/search`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, passages }),
+      body: JSON.stringify({ query, passages, ...(source ? { provider: source } : {}) }),
       signal: AbortSignal.timeout(35000), // big pages: 8 serial passes ≈ 6–8 s
     });
   } catch {
@@ -247,12 +256,13 @@ async function runSearch({ query, passages }) {
 
 /** Relay a why-chips pass to the helper. Same path as search: page text goes page → here → helper. */
 async function runWhy({ query, matches }) {
+  const source = await chosenSource();
   let res;
   try {
     res = await fetch(`${HELPER}/api/why`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, matches }),
+      body: JSON.stringify({ query, matches, ...(source ? { provider: source } : {}) }),
       signal: AbortSignal.timeout(30000),
     });
   } catch {

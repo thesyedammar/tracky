@@ -19,7 +19,8 @@ Body <= 512 KB
   "passages": [
     { "id": "p0", "text": "First readable block of the page..." },
     { "id": "p1", "text": "Second block..." }
-  ]
+  ],
+  "provider": "zen-free"
 }
 ```
 
@@ -29,6 +30,24 @@ Rules:
 - `passages`: 1–600 items; each `text` <= 2,200 chars; combined <= ~400k chars.
   Long pages are sent **whole** — the server chunks internally (the "full-page sweep"). Clients do NOT chunk.
 - `id`: stable for the session; used to map results back to the page.
+- `provider` (optional): which configured Jev source to use, from `GET /api/providers`.
+  Omitted → the helper's default. An unknown id is a **400** naming the ones that exist;
+  a source without its own key is a **503** naming the exact `.env` line to add.
+
+## GET /api/providers
+
+The extension's source dropdown is built from this — labels and models only, never a key.
+
+```json
+{
+  "default": "zen-paid",
+  "providers": [
+    { "id": "zen-paid", "label": "OpenCode Zen · Jev 1.13 (paid)", "kind": "paid", "model": "jev-1.13", "configured": true },
+    { "id": "zen-free", "label": "OpenCode Zen · Jev 1.13 (free window)", "kind": "free", "model": "jev-1.13-free", "configured": true },
+    { "id": "typesafe", "label": "TypeSafe AI (direct)", "kind": "paid", "model": "jev-latest", "configured": false }
+  ]
+}
+```
 
 ## Response 200
 

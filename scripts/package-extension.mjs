@@ -41,8 +41,15 @@ const ALLOW = [
   "icons/icon128.png",
 ];
 
-/** Secrets must never be inside a shipped file, in any form we know about. */
-const FORBIDDEN = [/\bsk-[A-Za-z0-9_-]{12,}/, /JEV_API_KEY/, /Bearer\s+[A-Za-z0-9_-]{20,}/, /\.env\b/];
+/** Secrets must never be inside a shipped file, in any form we know about.
+ *  Mentions of the PATH `server/.env` in user-facing text are fine (the UI tells you
+ *  where keys live); what must never appear is a key's VALUE. */
+const FORBIDDEN = [
+  /\bsk-[A-Za-z0-9_-]{12,}/, // provider key shapes
+  /JEV_API_KEY\s*[:=]\s*\S/, // an actual key assignment, not the bare name
+  /Bearer\s+[A-Za-z0-9_-]{20,}/, // a real bearer token
+  /\b[A-Z][A-Z0-9_]{2,}\s*=\s*[A-Za-z0-9_\-]{16,}/, // ENV_NAME=longvalue anywhere
+];
 
 // ---------------------------------------------------------------- zip writing
 const CRC_TABLE = (() => {

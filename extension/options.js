@@ -1,7 +1,7 @@
 // Tracky — options page logic. Reads/writes chrome.storage.local only; the
 // helper is contacted solely for a health check. No page text ever passes here.
 
-const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false, autoJump: true };
+const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false, autoJump: true, source: null };
 const HELPER = "http://127.0.0.1:4199";
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +23,78 @@ async function load() {
   $("autojump").checked = opts.autoJump !== false;
   $("hosts").value = Array.isArray(opts.disabledHosts) ? opts.disabledHosts.join("\n") : "";
   renderSpend(v.trackySpend);
+  await loadSources(opts.source ?? null);
+}
+
+/** Populate the source dropdown from the helper's /api/providers (labels only,
+ *  never keys). Offline → one honest option and a note that says to start it. */
+async function loadSources(saved) {
+  const sel = $("source");
+  const note = $("source-note");
+  let data = null;
+  try {
+    const res = await fetch(`${HELPER}/api/providers`, { signal: AbortSignal.timeout(2500) });
+    if (res.ok) data = await res.json();
+  } catch {
+    /* helper offline — handled below */
+  }
+  sel.textContent = "";
+  const add = (value, label, disabled = false) => {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    o.disabled = disabled;
+    sel.appendChild(o);
+  };
+  if (!data?.providers?.length) {
+    sel.disabled = true;
+    add("", "helper offline — start it to choose");
+    note.textContent = "Start the helper (node server/server.mjs) and reopen this page to pick where Jev comes from.";
+    note.className = "warn";
+    return;
+  }
+  sel.disabled = false;
+  const defP = data.providers.find((p) => p.id === data.default);
+  add("", `Helper default${defP ? ` — ${defP.label}` : ""}`);
+  for (const p of data.providers) {
+    const tags = [p.model, p.kind, p.configured ? "" : "no key yet"].filter(Boolean);
+    add(p.id, `${p.label} · ${tags.join(" · ")}`, !p.configured);
+  }
+  const want = typeof saved === "string" ? saved.trim().toLowerCase() : "";
+  const savedP = want ? data.providers.find((p) => p.id === want) : null;
+  sel.value = savedP?.configured ? want : "";
+  if (want && !sel.value) {
+    note.textContent = savedP
+      ? `The source you picked earlier (“${savedP.label}”) has no key right now — using the helper's default instead.`
+      : `The source you picked earlier (“${want.slice(0, 40)}”) is not in JEV_PROVIDERS any more — using the helper's default instead.`;
+    note.className = "warn";
+  } else {
+    updateSourceNote(data);
+  }
+  if (!loadSources.wired) {
+    loadSources.wired = true; // a second call must not stack a second listener
+    sel.addEventListener("change", async () => {
+      updateSourceNote(data);
+      await save();
+    });
+  }
+}
+
+function updateSourceNote(data) {
+  const note = $("source-note");
+  const id = $("source").value;
+  const p = data?.providers?.find((x) => x.id === id);
+  if (!p) {
+    const defP = data?.providers?.find((x) => x.id === data.default);
+    note.textContent = `Using the helper's default${defP ? ` — ${defP.label}` : ""}.`;
+    note.className = "muted";
+    return;
+  }
+  note.textContent =
+    p.kind === "paid"
+      ? `Using ${p.label} — searches are billed by the provider (pennies per search).`
+      : `Using ${p.label} — nothing is billed; when its window is closed the helper tells you how long to wait.`;
+  note.className = "muted";
 }
 
 function renderSpend(spend) {
@@ -37,12 +109,17 @@ async function save() {
     .value.split("\n")
     .map((h) => h.trim().toLowerCase())
     .filter((h) => h.length > 0 && !h.includes(" ") && !h.startsWith("http"));
+  // A disabled select means the helper was offline while this page was open: its empty
+  // value is "I couldn't ask", not "the user cleared it" — keep what was stored.
+  const sel = $("source");
+  const stored = (await chrome.storage.local.get({ trackyOpts: null }))?.trackyOpts?.source ?? null;
   const opts = {
     hijackCtrlF: $("hijack").checked,
     countSearches: $("count").checked,
     crossTab: $("cross").checked,
     autoJump: $("autojump").checked,
     disabledHosts: hosts,
+    source: sel.disabled ? stored : sel.value || null,
   };
   await chrome.storage.local.set({ trackyOpts: opts });
   flashSaved();
