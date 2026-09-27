@@ -550,3 +550,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - envSuffix collision not guarded: zen-paid vs zen_paid dedupe by id but share JEV_PROVIDER_ZEN_PAID_* env vars
   - options warn for unknown id shows raw String(saved).slice(0,40) with whitespace instead of normalized want; change listener added inside loadSources risks duplicates on re-call
   - kind inference defaults empty model to paid and substring /free/i can mislabel e.g. freebird; unconfigured provider should be kind-agnostic or unknown
+
+### Source picker (JEV_PROVIDERS, loop 4) — 8.3/10 🟡
+- 27 Sept 2026, 10:58 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, extension/options.js, server/test/providers.test.mjs
+- correctness **8.1** · craft **8.4** · robustness **8** · performance **9** · polish **8.2**
+- top fixes:
+  - loadSources wired-once listener closes over first-call data: second load keeps stale providers/note, offline-first stays broken forever; store latest data outside listener
+  - Same-host inheritance compares URL.host only, ignoring scheme: https key inherits to http same-hostname and goes cleartext; compare origin (scheme+host+port)
+  - Per-provider BASE_URL overrides never validated as URLs: typo stays configured:true until runtime fetch fails; validate like shared JEV_BASE_URL
+  - Default implicit id=default 503 names JEV_PROVIDER_DEFAULT_KEY which does not exist; when id is default it should name shared JEV_API_KEY / JEV_MODEL / JEV_BASE_URL
+  - No regression tests for the six loop-3 fixes: default-no-key 503, zen-paid vs zen_paid stem collapse, freebird boundary, loadEnv trim, normalized warn, single listener; 113/113 passes without covering them

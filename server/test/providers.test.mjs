@@ -3,8 +3,11 @@
 // host it does not belong to.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveProviders } from "../env.mjs";
+import { resolveProviders, loadEnv } from "../env.mjs";
 import { createHelperServer } from "../server.mjs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 const response = (payload, { ok = true, status = 200 } = {}) => ({
   ok,
@@ -97,6 +100,50 @@ test("labels fall back to the id, and _LABEL wins when set", () => {
   const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDER_ZEN_PAID_LABEL: "Zen (paid)" });
   assert.equal(providers[0].label, "Zen (paid)");
   assert.equal(providers[1].label, "zen-free");
+});
+
+test("a scheme change counts as another host — an https key must not follow to http", () => {
+  const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDER_TYPESAFE_BASE_URL: "http://zen.test/x" });
+  assert.equal(providers.find((p) => p.id === "typesafe").apiKey, "");
+});
+
+test("a typo'd provider URL is never 'configured'", () => {
+  const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDER_TYPESAFE_BASE_URL: "not a url" });
+  const ts = providers.find((p) => p.id === "typesafe");
+  assert.equal(ts.configured, false);
+});
+
+test("ids that share an env-var stem collapse to one source", () => {
+  const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDERS: "zen-paid,zen_paid" });
+  assert.deepEqual(
+    providers.map((p) => p.id),
+    ["zen-paid"],
+  );
+});
+
+test("loadEnv trims the shared values it returns", () => {
+  const dir = mkdtempSync(join(fileURLToPath(new URL(".", import.meta.url)), ".tmp-"));
+  const f = join(dir, ".env");
+  writeFileSync(f, 'JEV_BASE_URL=" https://zen.test "\nJEV_MODEL="  jev-1.13  "\nJEV_API_KEY=" k "\n');
+  const cfg = loadEnv({ envPath: f, target: {} });
+  assert.equal(cfg.baseUrl, "https://zen.test");
+  assert.equal(cfg.model, "jev-1.13");
+  assert.equal(cfg.apiKey, "k");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a default source with no key is a 503 naming the shared vars", async () => {
+  const bare = { baseUrl: "https://zen.test", model: "jev-1.13", apiKey: "k", defaultId: "default", providers: [{ id: "default", label: "default", kind: "paid", model: "", baseUrl: "", apiKey: "", configured: false }] };
+  const server = createHelperServer({ config: bare, fetchImpl: answerOk, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await post(base, "/api/search", onePassage);
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).message, /JEV_API_KEY/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });
 
 const config = {

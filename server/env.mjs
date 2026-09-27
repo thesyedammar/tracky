@@ -23,7 +23,7 @@ export const envSuffix = (id) => id.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 
 const hostOf = (u) => {
   try {
-    return new URL(u).host;
+    return new URL(u).origin; // scheme + host + port: an https key must not follow to http
   } catch {
     return null; // unparsable → treat as a different host and demand its own key
   }
@@ -43,7 +43,9 @@ export function resolveProviders(target = process.env) {
   const providers = ids.map((id) => {
     const P = `JEV_PROVIDER_${envSuffix(id)}_`;
     const model = String(target[P + "MODEL"] || target.JEV_MODEL || "").trim();
-    const ownBase = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
+    const ownBaseRaw = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
+    const ownBase = ownBaseRaw && hostOf(ownBaseRaw) ? ownBaseRaw : ""; // a typo'd URL is no URL at all
+    if (ownBaseRaw && !ownBase) return { id, label: id, kind: "paid", model: "", baseUrl: ownBaseRaw, apiKey: "", configured: false };
     const baseUrl = ownBase || String(target.JEV_BASE_URL || "").trim();
     // The shared key belongs to the shared host: a provider may inherit it only while
     // it stays on that same host, so the key can never travel somewhere it doesn't belong.

@@ -7,6 +7,7 @@ const HELPER = "http://127.0.0.1:4199";
 const $ = (id) => document.getElementById(id);
 const savedTag = $("saved");
 let savedTimer = null;
+let sourcesData = null; // the latest /api/providers payload, for the change listener
 
 function flashSaved() {
   savedTag.classList.add("on");
@@ -71,10 +72,11 @@ async function loadSources(saved) {
   } else {
     updateSourceNote(data);
   }
+  sourcesData = data; // the listener reads this, never a stale closure
   if (!loadSources.wired) {
     loadSources.wired = true; // a second call must not stack a second listener
     sel.addEventListener("change", async () => {
-      updateSourceNote(data);
+      updateSourceNote(sourcesData);
       await save();
     });
   }

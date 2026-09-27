@@ -121,8 +121,9 @@ function pickProvider(config, wanted) {
     const d = providers.find((p) => p.id === config.defaultId);
     if (d && !d.configured) {
       // The default source lost its key: say so, instead of sending an empty key upstream.
+      const envName = d.id === "default" ? "JEV_API_KEY (and JEV_MODEL / JEV_BASE_URL)" : `JEV_PROVIDER_${envSuffix(d.id)}_KEY`;
       throw new SearchError(
-        `The default source "${d.id}" has no key right now — add JEV_PROVIDER_${envSuffix(d.id)}_KEY to server/.env, or pick another source.`,
+        `The default source "${d.id}" has no key right now — add ${envName} to server/.env, or pick another source.`,
         503,
       );
     }
