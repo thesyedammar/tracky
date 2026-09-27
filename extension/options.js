@@ -1,7 +1,7 @@
 // Tracky — options page logic. Reads/writes chrome.storage.local only; the
 // helper is contacted solely for a health check. No page text ever passes here.
 
-const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false };
+const DEFAULTS = { hijackCtrlF: true, disabledHosts: [], countSearches: true, crossTab: false, autoJump: true };
 const HELPER = "http://127.0.0.1:4199";
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +20,7 @@ async function load() {
   $("hijack").checked = opts.hijackCtrlF !== false;
   $("count").checked = opts.countSearches !== false;
   $("cross").checked = opts.crossTab === true;
+  $("autojump").checked = opts.autoJump !== false;
   $("hosts").value = Array.isArray(opts.disabledHosts) ? opts.disabledHosts.join("\n") : "";
   renderSpend(v.trackySpend);
 }
@@ -40,6 +41,7 @@ async function save() {
     hijackCtrlF: $("hijack").checked,
     countSearches: $("count").checked,
     crossTab: $("cross").checked,
+    autoJump: $("autojump").checked,
     disabledHosts: hosts,
   };
   await chrome.storage.local.set({ trackyOpts: opts });

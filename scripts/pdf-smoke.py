@@ -274,12 +274,24 @@ def main() -> int:
                 check("a real search inside the PDF (blocked: model route rate-limited)", True, "re-run when the window opens")
             else:
                 check("a real search runs inside the PDF", state.get("hits", 0) >= 1, f"{state.get('hits')} hit(s) · {(state.get('status') or '')[:70]}")
+                # Enter already jumped, so the strong layer must be painted without any
+                # click; the faint layer holds every match.
+                layers = page.evaluate(
+                    "() => ({ now: CSS.highlights.has('tracky-hl-now'), all: CSS.highlights.has('tracky-hl'),"
+                    " hits: document.getElementById('tracky-root').shadowRoot.querySelectorAll('.hit').length,"
+                    " count: (document.getElementById('tracky-root').shadowRoot.querySelector('.findrow .count')?.textContent ?? '').trim() })"
+                )
+                check(
+                    "Enter jumps into the PDF and the match is marked on it",
+                    bool(layers["now"]) and layers["all"] and layers["count"] == f"1 of {layers['hits']}",
+                    f"now={layers['now']} all={layers['all']} · {layers['count']} · hits={layers['hits']}",
+                )
                 clicked = page.evaluate(
                     """() => { const r = document.getElementById('tracky-root').shadowRoot;
                         const b = r.querySelector('.hit .jump'); if (!b) return false; b.click(); return true; }"""
                 )
                 time.sleep(0.8)
-                painted = page.evaluate("() => CSS.highlights.has('tracky-hl')")
+                painted = page.evaluate("() => CSS.highlights.has('tracky-hl-now')")
                 check("clicking a result highlights it on the PDF itself", clicked and painted, f"clicked={clicked} painted={painted}")
             hl = page.evaluate(
                 """() => {

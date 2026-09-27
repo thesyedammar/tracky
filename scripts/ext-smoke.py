@@ -279,6 +279,63 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
             time.sleep(0.1)
         check("why-chips pick a reason from the helper's list", len(why_text) > 6, why_text)
 
+        # --- Phase 7: the find-bar feel. Enter lands on the best match by itself, every
+        # match carries a faint mark, the current one carries the strong mark, and the
+        # counter says which of how many. ---
+        findrow = page.evaluate(
+            "() => { const h = document.getElementById('tracky-root'); const s = h && h.shadowRoot;"
+            " if (!s) return null; const f = s.querySelector('.findrow'); if (!f) return null;"
+            " return { count: f.querySelector('.count')?.textContent ?? '',"
+            " prev: !!f.querySelector('.walk.prev'), next: !!f.querySelector('.walk.next') }; }"
+        )
+        painted = page.evaluate(
+            "() => { try { const all = CSS.highlights.get('tracky-hl');"
+            " const now = CSS.highlights.get('tracky-hl-now');"
+            " return { all: all ? [...all].length : 0, now: now ? [...now].length : 0,"
+            " current: now ? [...now][0].toString() : '' }; } catch { return null; } }"
+        )
+        n_hits_all = page.evaluate(
+            "() => document.getElementById('tracky-root').shadowRoot.querySelectorAll('.hit').length"
+        )
+        check(
+            "Enter lands on the best match on its own (find bar shows 1 of N)",
+            bool(findrow) and findrow["count"].strip() == f"1 of {n_hits_all}" and findrow["next"],
+            f"{findrow} · hits={n_hits_all}",
+        )
+        check(
+            "every match is marked and the current one is marked stronger",
+            bool(painted) and painted["all"] == n_hits_all and painted["now"] == 1 and len(painted["current"]) > 20,
+            f"all={painted['all']} now={painted['now']} hits={n_hits_all} · {painted['current'][:60]}",
+        )
+
+        # Enter again walks forward, Shift+Enter walks back — the counter and the strong
+        # mark must both follow.
+        def read_find():
+            return page.evaluate(
+                "() => { const s = document.getElementById('tracky-root').shadowRoot;"
+                " const count = s.querySelector('.findrow .count')?.textContent ?? '';"
+                " const now = CSS.highlights.get('tracky-hl-now');"
+                " return { count: count.trim(), current: now ? [...now][0].toString() : '' }; }"
+            )
+
+        page.evaluate("() => { document.getElementById('tracky-root').shadowRoot.querySelector('input').focus(); }")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(1000)
+        second = read_find()
+        check(
+            "Enter walks to the next match",
+            n_hits_all > 1 and second["count"] == f"2 of {n_hits_all}" and second["current"] != painted["current"],
+            f"{second['count']} · {second['current'][:50]}",
+        )
+        page.keyboard.press("Shift+Enter")
+        page.wait_for_timeout(1000)
+        back = read_find()
+        check(
+            "Shift+Enter walks back to the previous match",
+            back["count"] == f"1 of {n_hits_all}" and back["current"] == painted["current"],
+            f"{back['count']} · {back['current'][:50]}",
+        )
+
         # --- Phase 7: click results -> page scrolls to + highlights the exact sentence ---
         scroll_before = page.evaluate("window.scrollY")
         room = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
@@ -298,7 +355,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
             )
             page.wait_for_timeout(1100)
             hl_i = page.evaluate(
-                "() => { try { const h = CSS.highlights.get('tracky-hl');"
+                "() => { try { const h = CSS.highlights.get('tracky-hl-now');"
                 " return h ? [...h].map((r) => r.toString()).join(' | ') : ''; } catch { return ''; } }"
             )
             check(
@@ -307,7 +364,7 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
                 hl_i[:110],
             )
             inview = page.evaluate(
-                "() => { try { const h = CSS.highlights.get('tracky-hl'); const r = h && [...h][0]; if (!r) return null;"
+                "() => { try { const h = CSS.highlights.get('tracky-hl-now'); const r = h && [...h][0]; if (!r) return null;"
                 " const b = r.getBoundingClientRect(); return [Math.round(b.top), Math.round(b.bottom), window.innerHeight]; }"
                 " catch { return null; } }"
             )
@@ -351,8 +408,10 @@ def run_checks(pw, profile: Path, page_url: str) -> None:
         check("screenshot saved", shot.exists(), str(shot))
 
         # --- honest failure states ---
+        # Remove the block of the *current* match (the strong layer), then click that
+        # same hit: the panel must say the sentence is gone rather than pretend.
         page.evaluate(
-            "() => { try { const h = CSS.highlights.get('tracky-hl'); const r = h && [...h][0]; if (!r) return;"
+            "() => { try { const h = CSS.highlights.get('tracky-hl-now'); const r = h && [...h][0]; if (!r) return;"
             " const node = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;"
             " const block = node && node.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, figcaption, pre');"
             " if (block) block.remove(); } catch {} }"

@@ -178,6 +178,20 @@
       .chip:hover { background: rgba(245, 196, 83, .28); }
       .card-foot { color: #8A94A6; font-size: 11px; margin-top: 5px; }
       .group { color: #7C8698; font-size: 10px; letter-spacing: .5px; text-transform: uppercase; padding: 8px 2px 6px; }
+      /* The find bar, like the browser's own: which match of how many, and two
+         chevrons to walk them. Only local hits can be walked — other tabs' quotes
+         need their tab brought forward first. */
+      .findrow { display: flex; align-items: center; gap: 6px; padding: 7px 2px 3px; }
+      .findrow[hidden] { display: none; }
+      .findrow .walk {
+        appearance: none; cursor: pointer; width: 26px; height: 23px; padding: 0;
+        color: #E9EDF5; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12);
+        border-radius: 7px; font: 13px/1 ui-sans-serif, system-ui, sans-serif;
+      }
+      .findrow .walk:hover { background: rgba(255, 255, 255, .12); }
+      .findrow .walk:disabled { opacity: .35; cursor: default; }
+      .findrow .find-label { color: #AAB3C2; font-size: 11.5px; }
+      .findrow .count { margin-left: auto; color: #F5C453; font-size: 11.5px; font-variant-numeric: tabular-nums; }
       .hit .tag { display: inline-block; min-width: 36px; margin-right: 7px; color: #9FB4D8; font-size: 11px; font-weight: 600; }
       .hit .why { display: block; margin: 5px 0 0 19px; color: #9CC6A9; font-size: 11px; }
       .hit .why[hidden] { display: none; }
@@ -407,6 +421,7 @@
   };
   let opts = { hijackCtrlF: true, disabledHosts: [], countSearches: true };
   let xSearch = false; // include other tabs in this search (only when the option is on)
+  let lastQuery = ""; // the question the results on screen answer (Enter walks them)
   let lastCross = null; // { tabs, passages, skipped, results } from the last cross-tab search
   let spend = null; // { date, searches, passages } — a counter, not a log
   const DENY_MSG = "Tracky is off for this site — manage it in the extension options";
@@ -520,6 +535,7 @@
 
   function renderResults(query, literal, meaning, cross) {
     lastResults = [...literal, ...meaning];
+    lastQuery = query;
     const crossHits = Array.isArray(cross?.results) ? cross.results : [];
     if (!lastResults.length && !crossHits.length) {
       showResults(
@@ -528,6 +544,18 @@
       return;
     }
     const parts = [];
+    // The find bar sits on top so Enter/Shift+Enter (and these chevrons) can walk the
+    // matches without hunting for the jump button.
+    if (lastResults.length) {
+      parts.push(
+        `<div class="findrow">
+        <span class="find-label">On this page</span>
+        <button class="walk prev" type="button" title="Previous match (Shift+Enter)" aria-label="Previous match">‹</button>
+        <button class="walk next" type="button" title="Next match (Enter)" aria-label="Next match">›</button>
+        <span class="count" role="status" aria-live="polite"></span>
+      </div>`,
+      );
+    }
     // Answer card: the top sentences, verbatim, with receipt chips. The server
     // never composes this — the client only re-shows what was found.
     const top = (meaning.length ? meaning : literal).slice(0, 2);
@@ -556,6 +584,11 @@
     if (crossHits.length) parts.push(crossSection(crossHits, cross));
     parts.push(`<div class="results-foot"><button class="export" type="button">Copy all as markdown</button></div>`);
     showResults(parts.join(""));
+    // Every local match gets its faint mark straight away (Ctrl+F paints as you type);
+    // the strong mark and the counter wait for Enter, so typing never yanks the page.
+    currentHit = -1;
+    highlightAll();
+    renderCounter();
   }
 
   /** Other tabs' hits, grouped by tab. Each quote is labelled with the tab it came
@@ -702,7 +735,8 @@
   }
 
   // ---- receipts: highlight the exact quoted sentence on the page ----
-  const HL_NAME = "tracky-hl";
+  const HL_NAME = "tracky-hl"; // every match, faintly
+  const HL_NOW = "tracky-hl-now"; // the one you are looking at, stronger
 
   // ::highlight() rules must live in a page stylesheet — shadow styles can't reach
   // page ranges. One <style> in <head>, idempotent. Returns whether the rules
@@ -712,7 +746,11 @@
     const el = existing ?? document.createElement("style");
     if (!existing) {
       el.id = "tracky-page-style";
-      el.textContent = `::highlight(${HL_NAME}) { background-color: rgba(245, 196, 83, .45); color: inherit; }`;
+      // Two layers, like the browser's own find bar: all matches are marked, the
+      // current one is the strongest. Later registrations paint on top.
+      el.textContent =
+        `::highlight(${HL_NAME}) { background-color: rgba(245, 196, 83, .26); color: inherit; }\n` +
+        `::highlight(${HL_NOW}) { background-color: rgba(245, 196, 83, .55); color: inherit; }`;
       (document.head ?? document.documentElement).appendChild(el);
     }
     return !!(el.sheet && el.sheet.cssRules && el.sheet.cssRules.length > 0);
@@ -721,10 +759,78 @@
   function clearHighlight() {
     try {
       CSS.highlights?.delete(HL_NAME);
+      CSS.highlights?.delete(HL_NOW);
     } catch {
       /* no highlight support — nothing to clear */
     }
     for (const h of resultsEl.querySelectorAll(".hit")) h.classList.remove("selected");
+  }
+
+  const MAX_PAINTED = 200; // paint cost guard: the list itself still shows every hit
+  let currentHit = -1;
+
+  /** Paint every local hit's exact sentence, faintly — the page shows what you found. */
+  function highlightAll() {
+    if (!lastResults?.length || !lastById) return;
+    const ranges = [];
+    for (const r of lastResults) {
+      const block = lastById.get(r.passageId);
+      if (!block?.element?.isConnected) continue;
+      const pos =
+        Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
+          ? r.offset
+          : block.text.indexOf(r.sentence);
+      if (pos < 0) continue;
+      const range = rangeFor(block, pos, r.sentence.length);
+      if (range && !range.collapsed) ranges.push(range);
+      if (ranges.length >= MAX_PAINTED) break;
+    }
+    try {
+      if (ranges.length) CSS.highlights.set(HL_NAME, new Highlight(...ranges));
+      else CSS.highlights?.delete(HL_NAME);
+    } catch {
+      /* older engine: the current-match highlight below is the fallback */
+    }
+  }
+
+  /** Move the strong mark to hit `index` and keep the panel's counter in step. */
+  function markCurrent(index) {
+    currentHit = index;
+    const r = lastResults?.[index];
+    const block = r ? lastById?.get(r.passageId) : null;
+    try {
+      if (block?.element?.isConnected) {
+        const pos =
+          Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
+            ? r.offset
+            : block.text.indexOf(r.sentence);
+        const range = pos >= 0 ? rangeFor(block, pos, r.sentence.length) : null;
+        if (range && !range.collapsed) CSS.highlights.set(HL_NOW, new Highlight(range));
+        else CSS.highlights?.delete(HL_NOW);
+      } else {
+        CSS.highlights?.delete(HL_NOW);
+      }
+    } catch {
+      /* no highlight support */
+    }
+    renderCounter();
+  }
+
+  function renderCounter() {
+    const box = resultsEl.querySelector(".count");
+    if (!box) return;
+    const total = lastResults?.length ?? 0;
+    box.textContent = total ? `${currentHit + 1} of ${total}` : "";
+    box.hidden = total === 0;
+  }
+
+  /** Next / previous match, wrapping — the Enter and Shift+Enter keys. */
+  function cycleMatch(step) {
+    const total = lastResults?.length ?? 0;
+    if (!total) return false;
+    const next = currentHit < 0 ? 0 : (currentHit + step + total) % total;
+    jumpTo(next);
+    return true;
   }
 
   const flashTimers = new WeakMap();
@@ -814,7 +920,9 @@
     let highlightOk = false;
     if (range) {
       try {
-        CSS.highlights.set(HL_NAME, new Highlight(range));
+        // The strong layer, never the faint one: writing the all-matches layer here
+        // would wipe every other mark on the page.
+        CSS.highlights.set(HL_NOW, new Highlight(range));
         highlightOk = true;
       } catch {
         /* older engine: scroll + flash only */
@@ -843,6 +951,7 @@
     }
     flash(el);
     for (const h of resultsEl.querySelectorAll(".hit")) h.classList.toggle("selected", Number(h.dataset.index) === index);
+    markCurrent(index); // the strong mark and the "n of m" counter follow the jump
     showStatusBriefly("ok", marked ? "showing that sentence on the page" : "showing the paragraph — that sentence couldn't be marked");
   }
 
@@ -912,11 +1021,14 @@
     const jump = e.target?.closest?.(".jump");
     if (jump) {
       const hit = jump.closest(".hit");
-      if (hit?.dataset.xindex != null) {
-        jumpToOtherTab(Number(hit.dataset.xindex));
-        return;
-      }
-      if (hit) jumpTo(Number(hit.dataset.index));
+      if (hit?.dataset.xindex != null) jumpToOtherTab(Number(hit.dataset.xindex));
+      else if (hit) jumpTo(Number(hit.dataset.index));
+      return;
+    }
+    const walk = e.target?.closest?.(".walk");
+    if (walk) {
+      cycleMatch(walk.classList.contains("prev") ? -1 : 1);
+      return;
     }
   });
   resultsEl.addEventListener("keydown", (e) => {
@@ -1009,7 +1121,7 @@
         announce(`${c} match${c === 1 ? "" : "es"} for “${q}” (cached)`);
         if (hit.why) applyWhy(hit.why);
         else loadWhy(q, hit.meaning.length ? hit.meaning : hit.literalOnly, gen, key);
-        if (o.jump) jumpTo(0);
+        if (o.jump ?? (opts.autoJump !== false && !o.auto)) jumpTo(0); // land on the best match
         return;
       }
       setStatus("wait", `searching ${scoped.length} passages…`);
@@ -1048,7 +1160,10 @@
       bumpSpend(scoped.length);
       announce(`${count} match${count === 1 ? "" : "es"} for “${q}”`);
       loadWhy(q, meaning.length ? meaning : literalOnly, gen, key); // fire-and-forget; chips never block the list
-      if (o.jump) jumpTo(0);
+      // Enter lands you on the best match, like the browser's own find bar — unless
+      // the option is off, or this was a while-you-type search (jumping mid-typing
+      // would yank the page out from under you).
+      if (o.jump ?? (opts.autoJump !== false && !o.auto)) jumpTo(0);
     } catch (err) {
       setStatus("bad", /timeout/i.test(err?.message ?? "") ? "search timed out — is the helper healthy?" : HELP_FIX);
       showResults("");
@@ -1108,7 +1223,15 @@
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       clearTimeout(debounceTimer); // the explicit gesture wins over the debounce
-      runSearch(e.shiftKey ? { jump: true } : {}); // Shift+Enter = search and jump to the best match
+      const q = input.value.trim();
+      // Ctrl+F behaviour: once a question has answers, Enter walks the matches and
+      // Shift+Enter walks back. A new question searches and lands on the best match
+      // (Shift+Enter always lands, even when the auto-jump option is off).
+      if (q && q === lastQuery && lastResults?.length) {
+        cycleMatch(e.shiftKey ? -1 : 1);
+        return;
+      }
+      runSearch(e.shiftKey ? { jump: true } : {});
       return;
     }
     if (e.key === "ArrowDown") {
