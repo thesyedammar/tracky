@@ -2,7 +2,7 @@
 
 > Type *"hidden charges"* on a page that never uses those words and Tracky highlights the sentence you actually meant — **with receipts**: the exact text, in its exact place, nothing invented.
 
-**Status: Phases 0–9 built and verified.** The engine, the local helper and the extension are live and measured (numbers below). PDF mode, the playground and the packaging polish are next — see `PLAN.md`.
+**Status: every phase built and verified — Phases 0–15.** The engine, the local helper, the extension (including PDF mode and opt-in cross-tab search) and the packaging are live and measured (numbers below). The React playground (`app/`) is Hamdan's. See `PLAN.md` for the phase list.
 
 ## The 60-second tour
 
@@ -34,9 +34,14 @@ The trick that makes "never" real: the model is only allowed to **pick** from se
 | Unit tests | **100/100** (`node --test server/test/*.test.mjs`) |
 | Extension smoke checks | **46/46** on the fixture **and** on Wikipedia |
 | React survival (real React 18 app) | **9/9** — 0 nodes added/removed inside the app's root |
-| PDF mode (15-page paper) | 15 pages rendered in **4.0 s** · 2,490 text spans → 38 passages · **16/16** checks · highlight paints on the PDF's own text |
+| Cross-tab search (live, opt-in) | **12/12** — a real search returned a hit from another tab, labelled *In your other tabs* |
+| PDF mode (two real papers) | 15-page single-column + 16-page two-column (BERT): **33/33** checks · opens in **~1.8 s** · 2,490 spans → 39 passages · every block rebuilt from its own spans (0 mismatches) · **0** blocks stitch two columns · memory bounded (**2 of 16 canvases allocated, ~8 MB**, first page freed and repainted on return) |
+| Hostile text (prompt-injection bait on the page) | **5/5** — the bait cannot inflate its own score |
+| Benchmark through the real model | **8/8** cases · median **481 ms** |
+| Real pages, live | 10 sites × 3 questions · **30 rows, 0 invariant violations** (`docs/verification.md`) |
+| Full battery (`scripts/verify-all.sh`) | **11/11 with the model route live** — 0 failed, 0 blocked, 0 skipped |
 | Key-leak audit | tree + zip + all 10 commits → **0 leaks** |
-| Independent judge (Muse Spark 1.3) | every phase accepted at **8.6–9.1 / 10** (`docs/judge-report.md`) |
+| Independent judge (Muse Spark 1.3) | every phase accepted, **8.6–9.1 / 10**; the two newest phases scored **9.1** (PDF) and **8.9** (cross-tab) after 5–12 fix rounds each (`docs/judge-report.md`) |
 
 ## What leaves your machine
 

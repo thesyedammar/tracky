@@ -77,8 +77,17 @@ that are the same speed as on an HTML page.
 - The free model route rate-limits under heavy use; Tracky reports the real wait
   instead of pretending to search (see `server/search.mjs`).
 - A 1,000-passage page is ~13 batches, so it takes ~8–13 s. Scope chips are the fix.
-- PDF mode renders every page up front; a 300-page PDF would be slow to open. The
-  collector caps at 600 passages / 400k characters, so search stays bounded.
+- PDF mode builds the text layer for every page up front (that is what makes search
+  instant afterwards) but paints canvases lazily: a 15-page paper opens in **~1.8 s**,
+  and only the pages near the reader hold a pixel buffer — measured at the end of a
+  15-page document, **2 of 16 canvases allocated (~8 MB)** with the first page's buffer
+  returned, and a page scrolled back to repaints (`pdf-smoke.py` asserts both).
+- The collector caps at 600 passages / 400k characters, so search stays bounded even
+  on a 300-page PDF.
+- Column-aware PDF ordering is heuristic: it is used only when every detected column
+  holds a real share of a band's lines, and otherwise the reader falls back to the
+  PDF's own line order (verified against a real two-column paper: 0 blocks stitch two
+  columns together).
 
 ## Re-run it
 
