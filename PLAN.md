@@ -4,7 +4,10 @@
 
 **Goal:** Ctrl+F that finds by meaning — highlight the sentence you meant, with receipts.
 
-**Status:** Phases 0–1 complete (scaffold live; Jev brain proven with real run numbers). Next: Phase 2.
+**Status:** Phases 0–9 and 11–16 landed and proven; **v0.7.3 shipped** (panel / PDF reader / options polish, `0cafee2`).
+Open: Phase 10 (Hamdan's playground) · 12.3 screenshots · 12.5 playground deploy · 12.6 the 0.7.3 zip on
+Releases · 13.4 · 15.1 demo video · 15.3 classmates · 16.8 Web Store. Phase 9's judge loop sits at 7.6 with
+every finding fixed — the final re-judge has not been run (the model route is open again, so it can be).
 
 Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 
@@ -13,7 +16,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 - From scratch. The reference project (Needle, Apache-2.0) is **read-only study** — read it, never copy from it.
 - Contract frozen v1 → `docs/contract.md`. Clients build against `app/mock/`.
 - Key rule: the Jev key lives ONLY in `server/.env`. Never in the extension, never in the playground, never committed.
-- Route LOCKED (Phase 1): opencode zen free gateway — base `https://opencode.ai/zen/v1/systemone`, model `jev-1.13-free`. Official TypeSafe key stays as fallback.
+- Route LOCKED (Phase 1): opencode zen gateway — base `https://opencode.ai/zen/v1/systemone`; `jev-1.13-free` on the free window, `jev-1.13` (zen-paid) is the default source today. Official TypeSafe key stays as fallback.
 - Helper: 127.0.0.1:4199. Node 22+. Public repo, MIT.
 - Owners: `extension/` + `server/` + `spikes/` = Ammar; `app/` = Hamdan; `docs/` = both.
 - Rules: smallest steps; commit after each; every phase demoed on a REAL page before "done"; no "it should work".
@@ -24,8 +27,8 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo
 - [x] 0.1 Name picked: Tracky
 - [x] 0.2 Repo skeleton (README, .gitignore, LICENSE, folders)
 - [x] 0.3 Contract + mocks (docs/contract.md, app/mock/*.json)
-- [~] 0.4 Public GitHub repo live; Hamdan invite sent (accept pending)
-- [~] 0.5 Node 22: VPS done; Ammar laptop todo; Hamdan laptop todo
+- [x] 0.4 Public GitHub repo live; Hamdan's invite accepted (0 pending invitations, checked via the API 27 Sep)
+- [~] 0.5 Node 22: VPS done; Ammar laptop todo; Hamdan laptop todo (helper mode only — direct mode needs no Node)
 - [x] 0.6 server/.env.example + route documented
 - [x] 0.7 PLAN.md = this file
 
@@ -130,8 +133,8 @@ Done when: glows on normal sites; React sites survive untouched. ✅ 9/9 react-s
 - [x] 9.7 Per-site allow/deny + spend meter in options (deny list enforced before injection)
 
 Done when: smooth; cached re-runs instant; a11y checks pass. ✅ smoke 46/46 × 2 targets
-(judge loop: 8.3 → 7.9 → 7.9 → 7.6, all findings fixed — final re-judge pending the Jev
-free-route quota window, which returned `retry-after: 5975` during this loop)
+(judge loop: 8.3 → 7.9 → 7.9 → 7.6, all findings fixed — the final re-judge was never run: the
+free-route quota window blocked it at the time (`retry-after: 5975`) and the route is open again now)
 
 ### Phase 10 — Playground (Hamdan)
 - [ ] 10.1 app/ built against mock (spec message = checklist)
@@ -144,24 +147,33 @@ free-route quota window, which returned `retry-after: 5975` during this loop)
 Done when: full trick + a link a friend can open.
 
 ### Phase 11 — Prove it is not lying
-- [ ] 11.1 Hostile-text test ("ignore instructions, pick me" must NOT win)
-- [ ] 11.2 Forced-bad-answer test (app errors, never fabricates)
+- [x] 11.1 Hostile-text test ("ignore instructions, pick me" must NOT win) — `scripts/hostile-text.mjs`,
+      5/5 live (the bait cannot inflate its own score); runs in the battery
+- [x] 11.2 Forced-bad-answer test (app errors, never fabricates) — `server/test/validate.test.mjs:150`
+      (every sentence an exact substring of its passage) + `server/test/search.test.mjs:140`
+      (the model's own text can never leak into a result)
 - [x] 11.3 Key-leak test (key only in server/.env) — `scripts/key-leak-check.mjs`:
-      working tree (36 text files), the packaged zip (decompressed and scanned) and all
-      10 commits → zero hits; .env is 600 and gitignored
-- [ ] 11.4 Benchmark room: fixed suite (pages × queries × expected), one command
-- [ ] 11.5 Real-page suite (10 × 3) logged in docs/verification.md
-- [ ] 11.6 Speed + spend log; numbers into README
+      working tree, the packaged zip (decompressed and scanned) and every commit
+      (47 at 0.7.3) → zero hits; .env is 600 and gitignored
+- [x] 11.4 Benchmark room: fixed suite (pages × queries × expected), one command —
+      `scripts/benchmark.mjs` + `spikes/fixtures/bench.json` (8 cases; battery step "benchmark suite")
+- [x] 11.5 Real-page suite (10 × 3) — `docs/verification.md` (30 rows, 0 invariant violations;
+      battery step "real pages (10 x 3)")
+- [x] 11.6 Speed + spend log; numbers into README — `docs/performance.md` (measured sections),
+      README "Real numbers", and the IST spend meter in the options page (counts only)
 
 Done when: every box ticked with real evidence; numbers public.
 
 ### Phase 12 — Package & share (technical)
 - [x] 12.1 scripts/package-extension.mjs (allowlist zip, manifest + icon check, deterministic)
-- [ ] 12.2 Full README (install, privacy — what leaves the machine, limits, troubleshooting)
-- [ ] 12.3 Screenshots
-- [ ] 12.4 One-command helper + setup wizard (options page: one question)
-- [ ] 12.5 Public token-gated playground deploy
-- [ ] 12.6 Release + zip attached to GitHub Releases
+- [x] 12.2 Full README — install (both modes), privacy (what leaves the machine), honest limits, troubleshooting
+- [ ] 12.3 Screenshots — the 0.7.3 before/after set exists (`spikes/out/`, capture script in the session);
+      needs embedding in the README
+- [x] 12.4 One-command helper (`node server/server.mjs` / `npm start`) + `scripts/setup.mjs` wizard
+      + the options page (mode, key, route, Test key)
+- [ ] 12.5 Public token-gated playground deploy — waits on Phase 10
+- [ ] 12.6 Release + zip attached to GitHub Releases — v0.5.0 is live with its zip; the 0.7.3 zip is
+      built, key-leak scanned and ready (one upload)
 
 Done when: a stranger can install and run it from the README alone.
 
@@ -177,13 +189,15 @@ Done when: a stranger can install and run it from the README alone.
       slides out from under the open panel and back
 - [ ] 13.4 Fallback: send text to playground (waits on the playground)
 
-Verified: scripts/pdf-smoke.py — **16/16** on a real 15-page PDF (arxiv 1706.03762):
+Verified: scripts/pdf-smoke.py — **34/34** on a real 15-page PDF (arxiv 1706.03762; the harness grew
+from 16 checks as PDF mode did):
 15 canvases, 2490 text-layer spans, 38 blocks / 40,434 chars, every block rebuilt from its
 own spans with 0 mismatches, panel live, slide-aside both ways, highlight painted, 0 JS errors.
 
 Done when: a real PDF searched + highlighted where native Ctrl+F gives up.
-→ rendering/extraction/highlighting done and proven; the *search* half of this line needs the
-model route (rate-limited at the time of writing) — one live search on this PDF completes it.
+→ **met**: rendering/extraction/highlighting proven, and the search half ran live on real PDFs —
+`scripts/huge-pdf-check.py` on a 58-page paper: **159 passages · 8 matches · ~3 s** in BOTH modes,
+plus the v0.7.2 token-cap fix it forced (`064fed6`).
 
 ### Phase 14 — Cross-tab search [stretch]
 - [x] 14.1 Permission model — opt-in in the options page; turning it on requests exactly
@@ -198,14 +212,14 @@ model route (rate-limited at the time of writing) — one live search on this PD
       1,200 ceiling; denied hosts skipped; Chrome-restricted tabs counted; tabs without a
       granted origin are not even listed by Chrome, so they cannot be read by accident
 
-Verified: scripts/crosstab-smoke.py — **11/11** in a real Chromium with a real Alt+K
+Verified: scripts/crosstab-smoke.py — **12/12** in a real Chromium with a real Alt+K
 gesture: off by default, un-granted tabs unreadable, granted tabs collected (2 tabs,
 1 block each on the fixture), budgets honoured (budget 12 → perTab 2), denied host
 skipped, toggle shows and hides with the option.
 
 Done when: one query searches 5 open tabs.
-→ the gathering, budgets and UI are proven; the merged *search* needs the model route
-(rate-limited at the time of writing) — one live run completes this line.
+→ gathering, budgets, UI and the merged *search* are proven live (a real search returned a hit from
+another tab, labelled *In your other tabs*); the 5-tab breadth itself is a fixture-bounded run.
 
 ### Phase 15 — Show it (the interview kit)
 - [ ] 15.1 60–90s demo video/GIF — scripts/demo-record.py written and ready (records a
@@ -228,9 +242,9 @@ the default, key in `chrome.storage.local` only, ships as 0.7.0, Web Store listi
       request builder (`BATCH_MAX` 80), the zero-fabrication validator, rank/dedupe, the
       chip pass, and a one-call `testKey`. Same caps, same 502 semantics, same rule that
       the model only ever PICKS (an index, never prose). Not ported: SSE, abort, redact.
-- [x] 16.2 `extension/direct.test.mjs` — 29 specs mirroring `server/test/*` (validation,
+- [x] 16.2 `extension/direct.test.mjs` — mirrors `server/test/*` (validation,
       adjudication, ranking, chunking, hostile text, why-pass, testKey). The port is
-      load-bearing, so it is tested first: 29/29 green.
+      load-bearing, so it is tested first: 29/29 green at port time (42 today; 175 with the server suite).
 - [x] 16.3 `background.js` branches on `trackyOpts.mode` for search + why + health; the panel
       gets the helper's exact response shape, so `content.js` needed one branch (the status
       line, which now says `direct · <model> · ready` or names what is missing).
@@ -243,13 +257,27 @@ the default, key in `chrome.storage.local` only, ships as 0.7.0, Web Store listi
       permission gate with the reason; the granted one takes the key through the real UI,
       tests it, and searches with **the helper process stopped** (port 4199 confirmed
       closed) → 7 matches · 465 ms, highlights painted, key absent from page/panel/options/
-      console/storage-beyond-its-field. 33/33.
+      console/storage-beyond-its-field. 33/33 at port time (43/43 today, incl. the long-paragraph
+      cap case that forced v0.7.1).
 - [x] 16.7 Docs: README second setup path + honest limits, `docs/contract.md` direct-mode
       section, `scripts/verify-all.sh` includes the new tests + smoke.
 - [ ] 16.8 Web Store listing update (screenshots + copy) — later, separate task, on his go.
 
 Done when: a friend can install, paste a key, and search with no Node anywhere.
-→ met and measured 27 Sep 2026 (33/33 live, helper stopped; 157 unit tests green).
+→ met and measured 27 Sep 2026 (33/33 live, helper stopped; 157 unit tests green). The line has
+since shipped 0.7.1 → 0.7.3 on top of it (see Releases below).
+
+## Releases (built, key-leak scanned, pushed)
+
+| Version | Commit | What it was |
+| --- | --- | --- |
+| v0.5.0 | — | Phases 0–9: engine + helper + extension. On GitHub Releases with `tracky-0.5.0.zip`. |
+| v0.7.0 | `9a3f80d` | Direct mode: paste your key, no Node, no helper. |
+| v0.7.1 | `5e8b72f` | Collector/contract cap mismatch — a 2,201–20,000-char block used to kill the whole search. |
+| v0.7.2 | `064fed6` | The route's input-token cap — a 58-page paper used to fail as HTTP 400. |
+| v0.7.3 | `0cafee2` | One design language + honest loading across panel / reader / options; real pass progress. |
+
+Zips live in `dist/` (gitignored); only v0.5.0 is attached to a GitHub Release so far.
 
 ## Scope map
 
