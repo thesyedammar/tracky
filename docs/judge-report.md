@@ -500,3 +500,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Stub duplicates 600 instead of sharing MAX_BLOCKS constant risking divergence
   - Hyphen split across CHUNK_MAX_CHARS flush loses de-hyphenation and leaves trailing hyphen in prior block
   - Paint failure re-arms unconditionally with no backoff or error count, allowing endless retry on a permanently broken page
+
+### Find-bar behaviour (Phase 7 extension) — 8/10 🟡
+- 27 Sept 2026, 9:59 am IST · model `muse-spark-1.3-contributor` · type code · files: extension/content.js, extension/options.js, extension/options.html, scripts/ext-smoke.py, scripts/pdf-smoke.py
+- correctness **7.5** · craft **8** · robustness **8** · performance **8.5** · polish **8**
+- top fixes:
+  - Fix counter showing '0 of N' before any selection — hide or show match count until Enter lands
+  - Cache hit drops cross-tab section: lastCross not restored and renderResults called without cross arg
+  - Empty-result path does not reset currentHit or NOW layer, leaving stale selection state
+  - autoJump default is implicit via !==false and missing from initial opts, fragile and undocumented
+  - Redundant HL_NOW writes and per-jump ensurePageStyle lookup plus double scroll work

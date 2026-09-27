@@ -150,8 +150,17 @@ def run() -> int:
             )
             print(f"  {name}: “{q}” → {len(results)} match(es) in {ms} ms")
 
+    limited = sum(1 for *_, res, _ms, _top in rows if "502" in str(res) or "rate-limited" in str(res))
     md = ["# Tracky — real-page verification (Phase 11.5)", ""]
+    if limited == len(rows) and rows:
+        # Every row hit the model route's rate limit: that is a BLOCKED run, not a
+        # failure, and it must never overwrite a good report with a page of 502s.
+        print(f"\nBLOCKED — the model route rate-limited all {len(rows)} rows; docs/verification.md left as it was")
+        return 2
     md.append(f"Generated {time.strftime('%d %b %Y %H:%M IST')} · model via the local helper · 10 real pages × 3 questions.")
+    if limited:
+        md.append(f"")
+        md.append(f"Note: {limited} of {len(rows)} rows were blocked by the model route's rate limit and are reported as errors, not graded.")
     md.append("")
     md.append("The invariant checked on every row: **each returned sentence is an exact substring of the passage it came from**, and every score is inside 0–1. Relevance is shown so a human can judge it — a script cannot honestly grade meaning.")
     md.append("")

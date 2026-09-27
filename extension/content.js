@@ -419,7 +419,7 @@
     const name = clean(host);
     return !!n && !!name && (name === n || name.endsWith(`.${n}`));
   };
-  let opts = { hijackCtrlF: true, disabledHosts: [], countSearches: true };
+  let opts = { hijackCtrlF: true, disabledHosts: [], countSearches: true, autoJump: true };
   let xSearch = false; // include other tabs in this search (only when the option is on)
   let lastQuery = ""; // the question the results on screen answer (Enter walks them)
   let lastCross = null; // { tabs, passages, skipped, results } from the last cross-tab search
@@ -538,6 +538,8 @@
     lastQuery = query;
     const crossHits = Array.isArray(cross?.results) ? cross.results : [];
     if (!lastResults.length && !crossHits.length) {
+      currentHit = -1; // nothing to walk, and no stale strong mark left behind
+      clearHighlight();
       showResults(
         `<div class="empty">No meaning matches for “${esc(query)}”.<div class="tip">Tracky only quotes sentences that already exist on this page — try rephrasing the question.</div></div>`,
       );
@@ -756,6 +758,12 @@
     return !!(el.sheet && el.sheet.cssRules && el.sheet.cssRules.length > 0);
   }
 
+  let pageStyleOk = null; // the injected ::highlight rules, checked once per document
+  function pageStyleReady() {
+    if (pageStyleOk === null || !document.getElementById("tracky-page-style")) pageStyleOk = ensurePageStyle();
+    return pageStyleOk;
+  }
+
   function clearHighlight() {
     try {
       CSS.highlights?.delete(HL_NAME);
@@ -793,34 +801,50 @@
     }
   }
 
-  /** Move the strong mark to hit `index` and keep the panel's counter in step. */
-  function markCurrent(index) {
-    currentHit = index;
-    const r = lastResults?.[index];
-    const block = r ? lastById?.get(r.passageId) : null;
+  /** Paint the strong layer for one range. Returns whether it actually applied. */
+  function paintNow(range) {
     try {
-      if (block?.element?.isConnected) {
-        const pos =
-          Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
-            ? r.offset
-            : block.text.indexOf(r.sentence);
-        const range = pos >= 0 ? rangeFor(block, pos, r.sentence.length) : null;
-        if (range && !range.collapsed) CSS.highlights.set(HL_NOW, new Highlight(range));
-        else CSS.highlights?.delete(HL_NOW);
-      } else {
-        CSS.highlights?.delete(HL_NOW);
+      if (range && !range.collapsed) {
+        CSS.highlights.set(HL_NOW, new Highlight(range));
+        return true;
       }
+      CSS.highlights?.delete(HL_NOW);
     } catch {
       /* no highlight support */
     }
+    return false;
+  }
+
+  /** Remember which match is current and keep the counter in step. */
+  function setCurrent(index) {
+    currentHit = index;
     renderCounter();
+  }
+
+  /** Move the strong mark to hit `index` (used when the caller has no range handy). */
+  function markCurrent(index) {
+    const r = lastResults?.[index];
+    const block = r ? lastById?.get(r.passageId) : null;
+    if (!r || !block?.element?.isConnected) {
+      paintNow(null);
+      setCurrent(index);
+      return;
+    }
+    const pos =
+      Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
+        ? r.offset
+        : block.text.indexOf(r.sentence);
+    paintNow(pos >= 0 ? rangeFor(block, pos, r.sentence.length) : null);
+    setCurrent(index);
   }
 
   function renderCounter() {
     const box = resultsEl.querySelector(".count");
     if (!box) return;
     const total = lastResults?.length ?? 0;
-    box.textContent = total ? `${currentHit + 1} of ${total}` : "";
+    // Before Enter lands anywhere there is no "current" match — say how many there are
+    // rather than showing a "0 of N" that would be a lie.
+    box.textContent = !total ? "" : currentHit < 0 ? `${total} match${total === 1 ? "" : "es"}` : `${currentHit + 1} of ${total}`;
     box.hidden = total === 0;
   }
 
@@ -914,20 +938,10 @@
       showStatusBriefly("bad", "could not locate that sentence — the page may have changed");
       return;
     }
-    const styled = ensurePageStyle(); // false when a page CSP blocks our injected rules
+    const styled = pageStyleReady(); // cached: false when a page CSP blocks our rules
     let range = rangeFor(block, pos, r.sentence.length);
     if (range?.collapsed) range = null; // a zero-length mark would be a lie
-    let highlightOk = false;
-    if (range) {
-      try {
-        // The strong layer, never the faint one: writing the all-matches layer here
-        // would wipe every other mark on the page.
-        CSS.highlights.set(HL_NOW, new Highlight(range));
-        highlightOk = true;
-      } catch {
-        /* older engine: scroll + flash only */
-      }
-    }
+    const highlightOk = paintNow(range);
     const el = block.element;
     // Land the block instantly (works for window and inner scroll containers),
     // then ONE smooth correction centers the exact sentence. Two smooth scrolls
@@ -951,7 +965,7 @@
     }
     flash(el);
     for (const h of resultsEl.querySelectorAll(".hit")) h.classList.toggle("selected", Number(h.dataset.index) === index);
-    markCurrent(index); // the strong mark and the "n of m" counter follow the jump
+    setCurrent(index); // the range is already painted above — no second derivation
     showStatusBriefly("ok", marked ? "showing that sentence on the page" : "showing the paragraph — that sentence couldn't be marked");
   }
 
@@ -1111,7 +1125,7 @@
       const hit = o.force ? null : cache.get(key);
       if (hit && Date.now() - hit.at < CACHE_TTL) {
         lastSearchKey = key;
-        renderResults(q, hit.literalOnly, hit.meaning);
+        renderResults(q, hit.literalOnly, hit.meaning, hit.cross); // cross-tab survives the cache
         const c = hit.meaning.length + hit.literalOnly.length;
         statsKind = c ? "ok" : "idle";
         statsLine = `${hit.passages} passages · ${c} match${c === 1 ? "" : "es"}${scope ? ` · “${scope}”` : ""} · cached`;
@@ -1155,7 +1169,7 @@
       lastSearchKey = key;
       pushHistory(q);
       renderRecent();
-      cache.set(key, { meaning, literalOnly, passages: scoped.length, at: Date.now(), why: null });
+      cache.set(key, { meaning, literalOnly, passages: scoped.length, at: Date.now(), why: null, cross: lastCross });
       if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value); // oldest out
       bumpSpend(scoped.length);
       announce(`${count} match${count === 1 ? "" : "es"} for “${q}”`);
