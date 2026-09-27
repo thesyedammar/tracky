@@ -600,3 +600,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - Default-path missing-model/missing-address errors name only JEV_MODEL/shared JEV_BASE_URL, omitting the per-source JEV_PROVIDER_<ID>_MODEL/_BASE_URL alternative the picked path gives
   - Invalid shared JEV_BASE_URL throws even when no provider uses it, refusing an otherwise usable per-source config
   - Tag shows kind paid when model is empty, implying billing info that does not exist
+
+### Source picker (JEV_PROVIDERS, loop 9) — 8.4/10 🟡
+- 27 Sept 2026, 11:30 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs
+- correctness **8.5** · craft **9** · robustness **8** · performance **9** · polish **8**
+- top fixes:
+  - Startup log still prints shared config.model, empty for shared-less configs — should print default source model like /api/health does
+  - Default-path 503s for custom default id name only JEV_MODEL / shared JEV_BASE_URL, not the per-source JEV_PROVIDER_<ID>_MODEL/_BASE_URL alternative the explicit path now names
+  - loadEnv throws on invalid non-empty JEV_BASE_URL even when per-source config is fully usable, contradicting resolveProviders treating invalid shared base as no base
+  - createHelperServer pickProvider falls back to shared trio when defaultId has no matching provider instead of failing loudly, hiding misconfiguration
+  - Shared-less boot test only constructs server, never listens or routes a search — does not prove end-to-end routing to per-source baseUrl/model

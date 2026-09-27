@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tracky — search pages by meaning",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Ctrl+F that finds by meaning, not letters — and quotes the exact sentences it found. Page text goes only to your own local helper.",
   "minimum_chrome_version": "105",
   "permissions": ["activeTab", "scripting", "storage"],
