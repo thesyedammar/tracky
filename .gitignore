@@ -11,3 +11,7 @@ coverage/
 artifacts/
 *.zip
 spikes/out/
+
+# Python bytecode from the smoke harness
+__pycache__/
+*.pyc
