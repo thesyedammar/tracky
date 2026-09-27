@@ -590,3 +590,13 @@ Evidence: 107 blocks / 34.9k chars @7 ms (en.wikipedia.org/wiki/Lease) · smoke 
   - hostOf still called twice for shared base and twice per ownBase (ownBase check + ownOrigin) despite once-per-provider claim — cache parsed origin
   - loadEnv REQUIRES shared JEV_BASE_URL/MODEL/KEY even when every provider supplies its own values, blocking valid shared-less configs
   - tagOf shows 'no key yet' for missing-model/missing-base cases, conflating distinct failures in the dropdown label
+
+### Source picker (JEV_PROVIDERS, loop 8) — 7.8/10 🔴
+- 27 Sept 2026, 11:27 am IST · model `muse-spark-1.3-contributor` · type code · files: server/env.mjs, server/server.mjs, server/test/providers.test.mjs, extension/options.js
+- correctness **7.2** · craft **8.3** · robustness **7.8** · performance **9.2** · polish **8.1**
+- top fixes:
+  - createHelperServer still requires shared baseUrl/model/apiKey so a shared-less loadEnv result crashes on boot; guard must accept >=1 configured provider and health model must come from default provider
+  - Blank per-source MODEL ("   ") shadows shared model due to || before trim, unlike BASE_URL/KEY which ignore blanks
+  - Default-path missing-model/missing-address errors name only JEV_MODEL/shared JEV_BASE_URL, omitting the per-source JEV_PROVIDER_<ID>_MODEL/_BASE_URL alternative the picked path gives
+  - Invalid shared JEV_BASE_URL throws even when no provider uses it, refusing an otherwise usable per-source config
+  - Tag shows kind paid when model is empty, implying billing info that does not exist

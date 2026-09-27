@@ -254,6 +254,41 @@ test("the picked path names JEV_API_KEY for the implicit default source", async 
   }
 });
 
+test("a shared-less config boots the server, not just loadEnv", () => {
+  const dir = mkdtempSync(join(fileURLToPath(new URL(".", import.meta.url)), ".tmp-"));
+  const f = join(dir, ".env");
+  writeFileSync(
+    f,
+    ["JEV_PROVIDERS=typesafe", "JEV_PROVIDER_TYPESAFE_BASE_URL=https://api.typesafe.test/v1", "JEV_PROVIDER_TYPESAFE_MODEL=jev-latest", "JEV_PROVIDER_TYPESAFE_KEY=tk", ""].join("\n"),
+  );
+  const cfg = loadEnv({ envPath: f, target: {} });
+  const server = createHelperServer({ config: cfg, fetchImpl: answerOk, log: () => {} }); // must not throw
+  assert.ok(server);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("health reports the default source's model, and a blank per-source model falls back", async () => {
+  const cfg = {
+    baseUrl: "https://zen.test",
+    model: "shared-model",
+    apiKey: "k",
+    defaultId: "typesafe",
+    providers: [{ id: "typesafe", label: "TypeSafe", kind: "paid", model: "jev-latest", baseUrl: "https://api.typesafe.test/v1", apiKey: "tk", configured: true, badUrl: false }],
+  };
+  const server = createHelperServer({ config: cfg, fetchImpl: answerOk, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const body = await (await fetch(`${base}/api/health`)).json();
+    assert.equal(body.model, "jev-latest");
+    assert.equal(body.defaultSource, "typesafe");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+  const { providers } = resolveProviders({ ...baseEnv, JEV_PROVIDER_ZEN_PAID_MODEL: "   " });
+  assert.equal(providers[0].model, "jev-1.13"); // blank falls back to the shared model
+});
+
 const config = {
   baseUrl: "https://zen.test",
   model: "jev-1.13",

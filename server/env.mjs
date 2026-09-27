@@ -45,11 +45,11 @@ export function resolveProviders(target = process.env) {
   const sharedKey = String(target.JEV_API_KEY || "").trim();
   const providers = ids.map((id) => {
     const P = `JEV_PROVIDER_${envSuffix(id)}_`;
-    const model = String(target[P + "MODEL"] || target.JEV_MODEL || "").trim();
+    const model = String(target[P + "MODEL"] ?? "").trim() || String(target.JEV_MODEL ?? "").trim();
     const label = String(target[P + "LABEL"] ?? "").trim() || id; // a blank label falls back to the id
     const rawKind = String(target[P + "KIND"] || "").trim().toLowerCase();
     const kind = rawKind === "free" || rawKind === "paid" ? rawKind : /[-_]free\b/i.test(model) ? "free" : "paid";
-    const ownBaseRaw = target[P + "BASE_URL"] ? String(target[P + "BASE_URL"]).trim() : "";
+    const ownBaseRaw = String(target[P + "BASE_URL"] ?? "").trim(); // a blank value falls back to the shared base
     const ownOrigin = ownBaseRaw ? hostOf(ownBaseRaw) : null;
     const ownBase = ownOrigin ? ownBaseRaw : ""; // a typo'd URL is no URL at all
     const badUrl = Boolean(ownBaseRaw) && !ownOrigin;

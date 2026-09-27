@@ -179,8 +179,9 @@ export function createHelperServer({
   log = console.log,
   readTimeoutMs = 30_000,
 } = {}) {
-  if (!config?.baseUrl || !config?.model || !config?.apiKey) {
-    throw new Error("createHelperServer needs a Jev config (baseUrl, model, apiKey).");
+  const usable = (config?.providers ?? []).some((p) => p.configured);
+  if (!config || (!usable && !(config.baseUrl && config.model && config.apiKey))) {
+    throw new Error("createHelperServer needs at least one usable Jev source (see loadEnv).");
   }
 
   const server = createServer(async (req, res) => {
@@ -213,7 +214,7 @@ export function createHelperServer({
           ok: true,
           name: NAME,
           version: VERSION,
-          model: config.model,
+          model: config.providers?.find((p) => p.id === config.defaultId)?.model || config.model,
           defaultSource: config.defaultId ?? "default",
           caps: { bodyKB: BODY_CAP / 1024, passages: LIMITS.passagesMax, batch: BATCH_MAX },
         });
