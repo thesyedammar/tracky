@@ -198,7 +198,9 @@ test("/api/providers exposes badUrl and still never leaks a key", async () => {
   try {
     const body = await (await fetch(`${base}/api/providers`)).json();
     assert.equal(body.providers[0].badUrl, true);
+    assert.equal(body.providers[0].why, "broken address");
     assert.ok(!("apiKey" in body.providers[0]));
+    assert.ok(!("baseUrl" in body.providers[0]));
   } finally {
     await new Promise((r) => server.close(r));
   }

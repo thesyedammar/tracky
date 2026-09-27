@@ -223,13 +223,16 @@ export function createHelperServer({
       if (path === "/api/providers" && req.method === "GET") {
         return sendJson(res, 200, {
           default: config.defaultId ?? "default",
-          providers: (config.providers ?? []).map(({ id, label, kind, model, configured, badUrl }) => ({
+          providers: (config.providers ?? []).map(({ id, label, kind, model, configured, badUrl, baseUrl }) => ({
             id,
             label,
             kind,
             model,
             configured,
             badUrl: Boolean(badUrl),
+            // Why it can't be used — computed here, where baseUrl is actually known (the
+            // URL itself is deliberately never sent to the extension).
+            why: configured ? "" : badUrl ? "broken address" : !model ? "no model set" : !baseUrl ? "no address" : "no key yet",
           })),
         });
       }
