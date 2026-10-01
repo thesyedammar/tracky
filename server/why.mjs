@@ -99,6 +99,7 @@ export async function whyFor({ query, matches }, opts = {}) {
     throw new SearchError("The helper is missing its Jev configuration.", 500);
   }
   if (typeof query !== "string" || !query.trim()) throw new SearchError("Enter something you want to find.");
+  if (query.trim().length > LIMITS.queryMax) throw new SearchError(`Keep your search under ${LIMITS.queryMax} characters.`);
   if (!Array.isArray(matches) || matches.length === 0) throw new SearchError(`Send between 1 and ${WHY_MAX} matches.`);
   const body = buildWhyRequest({ query: query.trim(), matches, model: config.model }); // shape + duplicate gate
   const started = performance.now();

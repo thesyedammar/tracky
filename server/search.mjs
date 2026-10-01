@@ -5,6 +5,13 @@ import { validateSearchInput, parseJevAnswers, rankResults, SearchError } from "
 import { preparePassages, buildRequest, BATCH_MAX } from "./jev.mjs";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+/** Whole-search deadline. Default VALUE mirrored from extension/direct.js (the
+ *  mirror test in server/test/search.test.mjs pins both defaults): chunk passes
+ *  run serially and each costs a model round-trip, so a 1200-passage page would
+ *  otherwise hold the client for minutes with no word. Gate structures differ
+ *  by engine (server: 1 ms floor + slack + clamp; panel: 1 s floor, abort) —
+ *  only the default is shared, not the semantics. */
+export const DEFAULT_BUDGET_MS = 40_000;
 
 /** The model's own input cap, measured live (not guessed): a 65,291-token request
  *  passed and a ~66k one came back {"detail":{"error_type":"max_tokens_exceeded"}} —
@@ -14,6 +21,30 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  *  passage count alone: every passage carries its sentences twice (text + focus
  *  criteria) plus two questions, so the body runs ~2.5x the passage text. */
 export const MAX_BODY_CHARS = 140_000;
+
+/** Floor for one call's timeout: a dispatched call never gets less (fails fast
+ *  instead of running unbounded). The budget gate derives from this (see
+ *  askChunk) — change the floor and the gate follows. Integer: sub-ms fractions
+ *  are floored by the clamp, never rounded up or passed raw to
+ *  AbortSignal.timeout (which throws RangeError on fractions). */
+const MIN_CALL_MS = 1;
+// Remainders below MIN_CALL_MS + GATE_SLACK_MS would clamp to a <=2 ms
+// guaranteed-abort (floor pulse) — derived from the floor above, so a floor
+// change carries the gate with it; never a bare literal.
+const GATE_SLACK_MS = 2;
+/** Clamp one call's timeout to what's left of the whole-search budget: the
+ *  caller's timeoutMs is respected as the ceiling, a late call gets the remainder
+ *  (floored at 1 ms so it fails fast instead of running unbounded). At the
+ *  clamp call, `remaining` may be Infinity (first pass = no bound); both caller
+ *  options stay finite (timeoutMs and budgetMs are validated at searchText
+ *  entry — pinned by the Infinity-rejection test) — an unbounded whole
+ *  search would hang the client. Integer:
+ *  AbortSignal.timeout throws a RangeError on fractions, and the remainder of
+ *  two performance.now() readings is always fractional. Pure for exact unit
+ *  tests — timing behavior must never be eyeballed. */
+export function clampCallTimeout(timeoutMs, remaining) {
+  return Math.max(MIN_CALL_MS, Math.floor(Math.min(timeoutMs, remaining)));
+}
 
 /** The route's own error type, when it sends one: {"detail":{"error_type":"…"}}. */
 export function upstreamErrorType(text) {
@@ -32,7 +63,17 @@ export function upstreamErrorType(text) {
  * to: "search failed — Jev answered HTTP 400" on a 58-page paper whose 80-passage
  * batch measured 237,806 body chars ≈ 71k tokens).
  */
-export function chunkPrepared(prepared, { maxBodyChars = MAX_BODY_CHARS } = {}) {
+// Named (not inline) so the estimator and the tiling test share one source;
+// exported because chunk-level tests pin bulk cost but cannot isolate pair->0
+// on a 3-unit input — a named export beats a second behavioral fixture.
+export const ESCAPABLES_RE = /["\\\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+/** Chunk one prepared page under per-request body budgets (byte-exact for ASCII).
+ *  @param prepared passages from preparePassages
+ *  @param opts.maxBodyChars REQUIRED (no default): per-request body budget.
+ *  Callers state it explicitly (preview and searchText share MAX_BODY_CHARS);
+ *  missing/non-positive throws SearchError 500. */
+export function chunkPrepared(prepared, { maxBodyChars }) {
+  if (maxBodyChars === undefined) throw new SearchError("chunkPrepared: maxBodyChars is required (no default) — pass MAX_BODY_CHARS or an explicit budget.", 500);
   if (!Number.isFinite(maxBodyChars) || maxBodyChars <= 0) {
     throw new SearchError("maxBodyChars must be a positive number.", 500);
   }
@@ -40,10 +81,26 @@ export function chunkPrepared(prepared, { maxBodyChars = MAX_BODY_CHARS } = {}) 
   let cur = [];
   let est = 400; // the request scaffold: model, state.search, questions braces
   for (const p of prepared) {
-    // Measured, not guessed: text + criteria (which duplicate the sentences, keys and
-    // all) + two question texts + ids. A 2,040-char passage with 120 sentences really
-    // costs 5,757 body chars — the per-sentence keys are why the count is here.
-    const cost = p.text.length * 2 + p.sentences.length * 10 + 640;
+    // A true upper bound on the passage's serialized cost, not a guess. Most
+    // chars ride JSON unchanged, but `"`, `\` and controls escape — a control
+    // char costs 6 (`\u0001`), so "\u0001".repeat(2200) serializes to 13,202,
+    // not 4,400, and a text*2 multiplier would pack ~27 of those per chunk for
+    // a ~357k body against a 140k budget. Counting the escapables (quotes,
+    // backslashes, controls, and LONE surrogates — each +5 over its length)
+    // keeps ordinary text at ~the old cost while bounding adversarial text.
+    // Lone means unpaired: a valid pair (emoji) rides JSON literally and costs
+    // exactly its 2 units, so the lookarounds exclude halves with a partner.
+    // The tiling is exact, not approximate: a low preceded by a high is always
+    // that high's pair (a high followed by a low is paired by definition), so
+    // lone highs and lone lows each match once and pairs never match — +5 per
+    // match with no overlap and no gap (U+D800 U+D800 U+DC00 counts exactly
+    // one: the first high; the pair rides literally).
+    // Text appears twice (state + focus criteria, same escaping) with per-key
+    // overhead; the +640 is the two question texts + ids. E.g. a 2,040-char /
+    // 120-sentence passage bounds at 5,920 against 5,757 measured.
+    const escapables = p.text.match(ESCAPABLES_RE);
+    const jsonLen = p.text.length + (escapables ? escapables.length * 5 : 0) + 2;
+    const cost = jsonLen * 2 + p.sentences.length * 10 + 640;
     if (cur.length && (cur.length >= BATCH_MAX || est + cost > maxBodyChars)) {
       chunks.push(cur);
       cur = [];
@@ -58,25 +115,31 @@ export function chunkPrepared(prepared, { maxBodyChars = MAX_BODY_CHARS } = {}) 
 
 /**
  * Run a meaning-search.
- * opts: { config: {baseUrl, model, apiKey}, fetchImpl, timeoutMs, signal, rank, onProgress }
+ * opts: { config: {baseUrl, model, apiKey}, fetchImpl, timeoutMs, budgetMs, maxBodyChars, signal, rank, onProgress }
+ * Timeout note: per-call timeouts ride AbortSignal.timeout and need a live event
+ * loop to fire. The helper server always has one (open sockets); a bare one-shot
+ * script must keep its loop alive (e.g. an open handle) or timeouts never fire.
  * returns { results, stats: { chunks, passages, ms, usage: {input_tokens, output_tokens} } }
  */
 export async function searchText({ query, passages }, opts = {}) {
-  const { config, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, signal, rank, onProgress } = opts;
+  const { config, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, budgetMs = DEFAULT_BUDGET_MS, maxBodyChars = MAX_BODY_CHARS, signal, rank, onProgress } = opts;
   if (!config?.baseUrl || !config?.model || !config?.apiKey) {
     throw new SearchError("The helper is missing its Jev configuration.", 500);
   }
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) throw new SearchError("budgetMs must be a positive number.", 500);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new SearchError("timeoutMs must be a positive number.", 500);
   if (rank != null && (typeof rank !== "object" || Array.isArray(rank))) throw new SearchError("rank overrides must be an object.", 500);
   if (onProgress != null && typeof onProgress !== "function") throw new SearchError("onProgress must be a function.", 500);
   if (signal != null && !(signal instanceof AbortSignal)) throw new SearchError("signal must be an AbortSignal.", 500);
   const input = validateSearchInput({ query, passages });
   const prepared = preparePassages(input.passages);
-  const chunks = chunkPrepared(prepared);
+  const chunks = chunkPrepared(prepared, { maxBodyChars });
 
-  const started = performance.now();
+  const started = performance.now(); // AFTER prep: validation/chunking time is never charged here — same order as extension/direct.js (prep, then clock), so both engines' deadlines stay aligned
   const usage = { input_tokens: 0, output_tokens: 0 };
   const consumed = [];
   let requests = 0;
+  let topDone = 0; // finished top-level passes: halved sub-passes must never move the "pass N of M" denominator
 
   /** One request, with the model's own token cap handled instead of feared: a "too
    *  big" answer splits the chunk in half and retries each half (down to a single
@@ -84,17 +147,78 @@ export async function searchText({ query, passages }, opts = {}) {
    *  Only a single passage too big on its own is a real failure (413). */
   const askChunk = async (chunk) => {
     if (signal?.aborted) throw new SearchError("Search cancelled.", 499); // cancelled during a previous pass
+    // One post-build measure serves both layers: the gate below fails fast with
+    // the clear budget message, clampCallTimeout bounds the dispatched timeout -
+    // same remainder, so a call can never slip between them (a pre-build gate
+    // could pass with 2 ms left and then die as a 1 ms clamp-abort after
+    // building). remaining is measured ONCE per attempt and flows by const into
+    // gate+clamp — no re-read, so no interleaving can stale it (an await without
+    // a re-read could not change a const); the clock-count test pins one-measure
+    // while the scripted clocks pin outcomes. Measuring AFTER the build charges build time to
+    // the budget as well — a slow build fails fast at the gate instead of
+    // dispatching into an expired budget. (First pass exempt throughout: its
+    // build time is uncharged by design, same as its budget — the gate guards
+    // retries and later chunks, not the first request.)
     const body = buildRequest({ query: input.query, passages: chunk, model: config.model });
+    const remaining = budgetMs - (performance.now() - started);
+    // Never start a request the client will not wait for. One branch, not two:
+    // the FIRST DISPATCH — keyed on `requests === 0`: ONE request, not one
+    // chunk. It always runs with the caller's full timeout, so a slow route
+    // never turns one call into an instant error. Everything after it — the
+    // first chunk's own 413-halve retries included (the counter bumps before
+    // the fetch, so retries see requests>=1) — runs only while the whole-search budget holds (same SHAPE
+    // as extension/direct.js, which gates every non-first request on its own
+    // budget; floors and slack differ by engine). Denying 413-retries the
+    // exemption
+    // is safe by armageddon arithmetic: a dead backend echoing 413
+    // on every split still halves 1200→1 in 11 requests, each clamped — but
+    // bounded COST is not a completed sweep: a slow-but-alive backend can
+    // still gate mid-halve and abort unswept passages with the 502 above.
+    // (Enforcement: the spent-budget first-call test goes red if the exemption
+    // ever stops covering the first dispatch — e.g. `requests++` moving above
+    // the branch.)
+    // Honest worst case: ~max(timeoutMs, budgetMs). The exempt first request
+    // runs up to timeoutMs; every later request is clamped to the remaining
+    // budget, so the sweep past the first request stays within ~budgetMs
+    // total — and a first request that itself burns past the budget aborts
+    // the rest at the gate. (Not the sum: elapsed already includes the first
+    // call when later remainders are computed.)
+    let callTimeoutMs;
+    if (requests === 0) {
+      // No budget bound (clamp(t, Inf) is the caller’s full timeout,
+      // sanitized to a floored int >= MIN_CALL_MS).
+      callTimeoutMs = clampCallTimeout(timeoutMs, Infinity);
+    } else {
+      // Below min(timeoutMs, MIN_CALL_MS + GATE_SLACK_MS) left counts as spent. This is a BUDGET gate, not
+      // a dispatch-timeout gate: past it, the budget side of the clamp
+      // contributes no less than min(3, timeoutMs) — remaining >= min(t, 3)
+      // gives min(t, remaining) >= min(3, t) in every regime, so the gate never
+      // shrinks a call below what the caller asked for (a 2 ms caller timeout
+      // with 2.5 left dispatches a 2 ms call, exactly as asked). For
+      // caller timeouts >= 3 the gate kills the sub-3 ms remainders the clamp
+      // would otherwise floor into 1–2 ms aborts; a remainder of exactly 3
+      // still dispatches a 3 ms call, which may itself abort on a slow
+      // network — the gate draws the line at the clamp's floor, not at
+      // guaranteed delivery. Invariant past this gate:
+      // min(timeoutMs, remaining) >= min(3, timeoutMs).
+      if (remaining < Math.min(timeoutMs, MIN_CALL_MS + GATE_SLACK_MS)) {
+        throw new SearchError(
+          "Jev is answering slowly — search timed out before the whole page was swept. Try again, or scope the search to a section.",
+          502,
+        );
+      }
+      callTimeoutMs = clampCallTimeout(timeoutMs, remaining);
+    }
     requests++;
     try {
-      const { data } = await askJev(body, { config, fetchImpl, timeoutMs, signal });
+      const { data } = await askJev(body, { config, fetchImpl, timeoutMs: callTimeoutMs, signal });
       usage.input_tokens += Number(data?.usage?.input_tokens) || 0;
       usage.output_tokens += Number(data?.usage?.output_tokens) || 0;
       consumed.push(...parseJevAnswers(data, chunk));
       onProgress?.({
         done: consumed.length,
         total: prepared.length,
-        chunk: requests,
+        chunk: topDone + 1, // the current top-level pass (1-based); sub-pass retries report the same pass, never N > M
         chunks: chunks.length,
       });
     } catch (e) {
@@ -105,7 +229,13 @@ export async function searchText({ query, passages }, opts = {}) {
     }
   };
 
-  for (const chunk of chunks) await askChunk(chunk);
+  for (const chunk of chunks) {
+    await askChunk(chunk);
+    topDone++; // AFTER the await: counts COMPLETED passes, so in-flight events
+    // read topDone+1. (Placement pinned in server/test/search.test.mjs: the
+    // abort test's first-event index and the final-event pin both fire if
+    // this moves.)
+  }
   return {
     results: rankResults(dedupeResults(consumed), rank ?? {}),
     stats: { chunks: chunks.length, requests, passages: prepared.length, ms: Math.round(performance.now() - started), usage },

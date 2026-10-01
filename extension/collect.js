@@ -4,7 +4,19 @@
 // by the helper can later be highlighted without re-parsing the page.
 
 (() => {
-  if (window.__trackyCollect) return;
+  // An updated extension re-injects this file on every icon click, but the
+  // guard below used to keep the FIRST version ever loaded alive until the page
+  // reloaded. Stamp the installed collector with the extension version (which
+  // changes on every release) so an update reinstalls and only an identical
+  // version is kept.
+  const COLLECTOR_V = (() => {
+    try {
+      return chrome.runtime.getManifest().version;
+    } catch {
+      return "0"; // chrome.runtime unavailable: behave exactly like the old guard
+    }
+  })();
+  if (window.__trackyCollect && window.__trackyCollect.v === COLLECTOR_V) return;
 
   const BLOCK_SELECTOR =
     "p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, td, th, figcaption, pre, summary, caption";
@@ -50,7 +62,9 @@
       }
       if (node.nodeType === Node.ELEMENT_NODE) {
         if (skipEl(node)) return;
-        if (node.tagName === "BR") {
+        // XHTML/XML pages preserve source case ("br"), HTML uppercases it —
+        // skipEl above already normalizes for exactly this reason.
+        if ((node.tagName || "").toUpperCase() === "BR") {
           segments.push({ synthetic: true, start: out.length, end: out.length + 1 });
           out += "\n";
           return;
@@ -198,7 +212,11 @@
         stats.skipped++;
         continue;
       }
-      const key = trimmed.replace(/\s+/g, " ").toLowerCase().slice(0, 160);
+      // Full text, not a prefix: a 160-char prefix drops distinct long blocks that
+      // share boilerplate openings (mirrored in pdf-viewer.js, like hostMatches is
+      // mirrored below). Memory is bounded by the caps above: at most 400k chars
+      // of keys per collect, freed with `seen` when the collect returns.
+      const key = trimmed.replace(/\s+/g, " ").toLowerCase();
       if (seen.has(key)) {
         stats.skipped++;
         continue;
@@ -243,4 +261,5 @@
     window.__trackyExtractText = extractText; // same: debug + tests
     return { blocks, stats, byId: registry, sections };
   };
+  window.__trackyCollect.v = COLLECTOR_V; // the version stamp the guard above compares
 })();

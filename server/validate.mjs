@@ -18,11 +18,12 @@ export const LIMITS = {
   passageMax: 2200, // chars per passage
   passagesMax: 1200, // engine safety cap; the extension collects ≤600 per contract (frozen v1)
   totalCharsMax: 400_000,
+  totalBytesMax: 400_000, // SERIALIZED bytes, not raw: quotes/backslashes/controls/CJK all inflate on the wire, and the transport cap counts wire bytes. 400 KB of passage JSON + ids/query overhead always fits the 512 KB body cap — a validated request can never 413 on passage text
   minBest: 0.58, // the best score must clear this for ANY results to show (re-tuned in Phase 11)
   resultsMax: 8, // ranked results surfaced by default
 };
 
-const ID_RE = /^p(0|[1-9]\d*)$/; // canonical: p0, p1, … — "p00" is malformed
+const ID_RE = /^p(0|[1-9]\d{0,4})$/; // canonical: p0, p1, … — "p00" is malformed. Defense in depth beside the byte cap (which measures the exact wire bytes incl. ids): the shape rejects garbage early with a clear 400, and the 6-char ceiling keeps any single id trivially small
 const CHOICE_RE = /^s(0|[1-9]\d*)$/; // canonical: s0, s1, … — "s01" is malformed
 
 /** Validate and normalize a search input. Returns { query, passages: [{id, text}] }. */
@@ -37,6 +38,7 @@ export function validateSearchInput(body) {
 
   const ids = new Set();
   let total = 0;
+  let idChars = 0;
   const normalized = passages.map((p) => {
     if (!p || typeof p !== "object") throw new SearchError("Every passage must be { id, text }.");
     if (typeof p.id !== "string" || !ID_RE.test(p.id) || ids.has(p.id)) {
@@ -46,9 +48,37 @@ export function validateSearchInput(body) {
     if (p.text.length > LIMITS.passageMax) throw new SearchError(`A passage is over ${LIMITS.passageMax} characters.`);
     ids.add(p.id);
     total += p.text.length;
+    idChars += Buffer.byteLength(p.id); // BYTES not chars: the exact wire cost, sound for any charset ID_RE may ever allow — no ASCII coupling by construction.
     return { id: p.id, text: p.text };
   });
   if (total > LIMITS.totalCharsMax) throw new SearchError("This document is too long — try a section under 400,000 characters.");
+  // Wire bytes of the normalized array in ONE stringify: ids, scaffolding,
+  // commas and brackets included — exactly what the transport measures.
+  // Skipped when provably unnecessary: bound <= cap implies true <= cap, so
+  // > skips the stringify with no loss; the bound may measure unnecessarily,
+  // never skip wrongly. Term-by-term derivation (6B units, 21/n share,
+  // query-derived slack, the two coincident 21s) lives atop the scaffolding test in
+  // test/validate.test.mjs — read it before touching the formula.
+  // One binding, two roles: the > here is the fast-path TRIGGER (skip at or
+  // under the cap), the > at the stringify comparison is the TRUE CAP (pass
+  // at equality). Same constant, same operator.
+  // NOTE the layering: this bounds the DOCUMENT payload. Per-request
+  // question scaffolding (relevance + focus texts, sentence criteria) is
+  // bounded separately by chunkPrepared's cost model (text ×2 for
+  // state+criteria, +640/passage, ≤80 passages/chunk, estimator ≤140 KB),
+  // so each dispatched body stays far under the 512 KB transport cap with
+  // 413-halving as the backstop. Typical requests pay nothing here; only
+  // near-cap payloads pay one ~6 ms pass.
+  const TEXT_WIRE_MAX = 6 * total; // <=6 B per unit (U+XXXX escapes, lone surrogates; CJK 3, astral pairs 2)
+  const ID_WIRE = idChars; // exact bytes, not 6*n: the id cap would allow that bound, but exact keeps the fast path tight (fewer slow-path measures)
+  const SCAFFOLD_WIRE_MAX = 21 * normalized.length; // 19 B fixed + array share (brackets + commas: 2 B at n=1, ~1 B/passage at scale)
+  const QUERY_ENVELOPE_SLACK = LIMITS.queryMax * 6 + 100; // worst-case query on the wire + request envelope
+  if (TEXT_WIRE_MAX + ID_WIRE + SCAFFOLD_WIRE_MAX + QUERY_ENVELOPE_SLACK > LIMITS.totalBytesMax) {
+    const totalJson = Buffer.byteLength(JSON.stringify(normalized));
+    // Raw bytes lie: 400 KB of quotes is ~800 KB once JSON-escaped and would die
+    // at the transport's byte cap with a bare 413. Fail here instead, with the reason.
+    if (totalJson > LIMITS.totalBytesMax) throw new SearchError("This document is too long once encoded — try a smaller section.");
+  }
   return { query: q, passages: normalized };
 }
 

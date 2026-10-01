@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { REASONS, WHY_MAX, buildWhyRequest, parseWhyAnswers, validateWhyInput, whyFor } from "../why.mjs";
-import { SearchError } from "../validate.mjs";
+import { LIMITS, SearchError } from "../validate.mjs";
 
 const match = (id, sentence = "A late fee of Rs.300 per hour is charged.") => ({ passageId: id, sentence });
 const norm = (id, sentence = "A late fee of Rs.300 per hour is charged.") => ({ id, sentence }); // normalized (post-validate) shape
@@ -93,6 +93,44 @@ test("whyFor runs one call and maps failures to SearchError", async () => {
   await assert.rejects(whyFor({ query: "fees", matches: [norm("p0")] }, { config, fetchImpl: badFetch }), (e) => e instanceof SearchError && e.status === 502);
 
   await assert.rejects(whyFor({ query: "fees", matches: [norm("p0")] }, {}), /missing its Jev configuration/);
+});
+
+test("whyFor caps the query like the HTTP path — before any Jev call", async () => {
+  const config = { baseUrl: "http://x", model: "m", apiKey: "k" };
+  let calls = 0;
+  const fetchImpl = async () => (calls++, { ok: true, text: async () => "{}" });
+  // Both entry points share LIMITS by import (why.mjs + server.mjs read the
+  // same validate.mjs) — the HTTP path delegates to whyFor, so one constant
+  // cannot silently diverge from the other. Built from the constant itself:
+  await assert.rejects(
+    whyFor({ query: "x".repeat(LIMITS.queryMax + 1), matches: [norm("p0")] }, { config, fetchImpl }),
+    (e) => e instanceof SearchError && e.status === 400 && e.message.includes(`under ${LIMITS.queryMax}`),
+  );
+  assert.equal(calls, 0, "an over-long query must never reach the model");
+});
+
+test("queryMax boundary is identical trimmed text on both paths", async () => {
+  // validateWhyInput (HTTP path) and whyFor's own gate must agree at the
+  // edge: both trim, both read LIMITS.queryMax, both embed it in the message.
+  // 404 raw chars that trim to 400 pass everywhere; 401 trimmed chars fail
+  // everywhere, before any Jev call.
+  const padded = "  " + "x".repeat(LIMITS.queryMax) + "  ";
+  const out = validateWhyInput({ query: padded, matches: [match("p0")] });
+  assert.equal(out.query, "x".repeat(LIMITS.queryMax), "HTTP path trims before measuring");
+  const config = { baseUrl: "http://x", model: "m", apiKey: "k" };
+  let calls = 0;
+  const okFetch = async () => {
+    calls++;
+    return { ok: true, text: async () => JSON.stringify({ answers: { p0: { choice: "r2" } }, usage: {} }) };
+  };
+  await whyFor({ query: padded, matches: [norm("p0")] }, { config, fetchImpl: okFetch });
+  assert.equal(calls, 1, "trimmed-to-limit dispatches");
+  const over = "x".repeat(LIMITS.queryMax + 1);
+  assert.throws(() => validateWhyInput({ query: over, matches: [match("p0")] }),
+    (e) => e instanceof SearchError && e.message.includes(String(LIMITS.queryMax)));
+  await assert.rejects(whyFor({ query: over, matches: [norm("p0")] }, { config, fetchImpl: okFetch }),
+    (e) => e instanceof SearchError && e.message.includes(String(LIMITS.queryMax)));
+  assert.equal(calls, 1, "over-limit never reaches Jev");
 });
 
 test("whyFor takes the normalized shape — the raw body goes through validateWhyInput first", async () => {

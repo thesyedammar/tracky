@@ -67,6 +67,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const st = badgeState.get(tabId);
   if (st?.timer) clearTimeout(st.timer);
   badgeState.delete(tabId);
+  pdfOffer.delete(tabId); // a closed tab's offer dies with it: a future tab reusing
+  // the id must never inherit "open the PDF reader" for a non-PDF page
 });
 
 /** The user's per-site deny list, straight from storage (options page writes it). */
@@ -147,7 +149,7 @@ async function openPanel(tab) {
     return;
   }
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["collect.js", "content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["collect.js", "shared.js", "content.js"] });
     await chrome.tabs.sendMessage(tab.id, { type: "tracky:open" });
     await chrome.action.setTitle({ tabId: tab.id, title: DEFAULT_TITLE });
     await clearBadge(tab.id);
@@ -338,36 +340,42 @@ async function helperSearchStream(body, onProgress) {
   let buf = "";
   let result = null;
   let sawProgress = false;
+  // One parser for every frame, streaming or tail: split on raw-byte boundaries
+  // (findSseBoundary never normalizes, so a CR/LF split across two reads cannot
+  // fuse into a phantom frame) and parse each frame the same way.
+  const handleFrame = (frame) => {
+    const parsed = parseSseFrame(frame);
+    if (!parsed) return; // heartbeat, comment or trailing whitespace: never fatal
+    let payload;
+    try {
+      payload = JSON.parse(parsed.data);
+    } catch {
+      return; // a frame we cannot read is not a reason to lose the answer
+    }
+    if (parsed.ev === "progress") {
+      sawProgress = true;
+      onProgress?.(payload);
+    } else if (parsed.ev === "result") {
+      result = payload;
+    } else if (parsed.ev === "error") {
+      const e = new Error(payload?.message ?? "search failed");
+      e.status = payload?.status ?? null;
+      e.helperDown = false; // a structured answer means the helper IS running
+      throw e;
+    }
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     let cut;
-    while ((cut = buf.indexOf("\n\n")) !== -1) {
-      const frame = buf.slice(0, cut);
-      buf = buf.slice(cut + 2);
-      const ev = /^event: (.+)$/m.exec(frame)?.[1];
-      const raw = /^data: (.+)$/m.exec(frame)?.[1];
-      if (!ev || !raw) continue;
-      let payload;
-      try {
-        payload = JSON.parse(raw);
-      } catch {
-        continue; // a frame we cannot read is not a reason to lose the answer
-      }
-      if (ev === "progress") {
-        sawProgress = true;
-        onProgress?.(payload);
-      } else if (ev === "result") {
-        result = payload;
-      } else if (ev === "error") {
-        const e = new Error(payload?.message ?? "search failed");
-        e.status = payload?.status ?? null;
-        e.helperDown = false; // a structured answer means the helper IS running
-        throw e;
-      }
+    while ((cut = findSseBoundary(buf)) !== null) {
+      handleFrame(buf.slice(0, cut.index));
+      buf = buf.slice(cut.index + cut.length);
     }
   }
+  buf += decoder.decode();
+  if (buf) handleFrame(buf); // a tail frame without a trailing blank line still counts
   if (result) return result;
   if (sawProgress) throw new Error("the helper's stream ended early — try again");
   return null; // nothing was spent yet: the plain call is safe
@@ -534,6 +542,11 @@ async function collectFromTabs(currentTabId, budget) {
   if (!candidates.length) return done({});
 
   const perTab = Math.max(1, Math.min(CROSS_TOTAL, Math.floor(budget / candidates.length)));
+  // The passage cap above is per tab, but the collector's char cap defaults to
+  // the whole 400k per tab — 6 tabs could inject 2.4M chars before the merge's
+  // room check ever sees them. Split the ceiling the same way so each tab is
+  // asked for at most its share.
+  const perTabChars = Math.max(1, Math.floor(CROSS_CHARS / candidates.length));
   // One storage read, one injection pass, all tabs in parallel — no per-tab serial
   // round-trips. A tab that never answers (a hung renderer) must not hang the whole
   // search: each collection races a 4s deadline, the timer is cleared either way, and
@@ -561,8 +574,8 @@ async function collectFromTabs(currentTabId, budget) {
             await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["collect.js"] });
             const [res] = await chrome.scripting.executeScript({
               target: { tabId: t.id },
-              func: (cap) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap }) : null),
-              args: [perTab],
+              func: (cap, capChars) => (typeof window.__trackyCollect === "function" ? window.__trackyCollect({ maxBlocks: cap, maxChars: capChars }) : null),
+              args: [perTab, perTabChars],
             });
             const blocks = Array.isArray(res?.result?.blocks) ? res.result.blocks : null;
             return { tab: t, blocks };
@@ -659,7 +672,7 @@ async function searchWithTabs({ query, passages, currentTabId }) {
     }
   }
 
-  const out = await runSearch({ query, passages: merged });
+  const out = await runSearch({ query, passages: merged }, currentTabId);
   const results = (out.results ?? []).map((r) => {
     const tab = map.get(r.passageId);
     return tab ? { ...r, tab } : r;
@@ -691,7 +704,7 @@ async function jumpToTab({ tabId, query }) {
         /* window focus is a nicety, never a failure */
       }
     }
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["collect.js", "content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["collect.js", "shared.js", "content.js"] });
     await chrome.tabs.sendMessage(tabId, { type: "tracky:run", query });
     return { ok: true };
   } catch (e) {

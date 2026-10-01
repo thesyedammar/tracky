@@ -108,6 +108,45 @@ test("404 for unknown paths and non-POST on POST routes", async () => {
   });
 });
 
+test("no error response carries a stack or internals — only {message}", async () => {
+  // Every failure below travels a different error path (validation 400, body
+  // cap 413, upstream 502, unknown route 404, raw escape 500); all must expose
+  // the same message-only shape, never a stack trace or echoed internals.
+  const downFetch = () => response("upstream exploded", { ok: false, status: 500 });
+  const rawEscapeFetch = () => ({
+    ok: false,
+    status: 429, // the rate-limit branch reads retry-after OUTSIDE any try…
+    headers: { get: () => { throw new Error("boom-inside-headers"); } }, // …so a raw throw here escapes as a genuine 500
+    text: async () => "",
+  });
+  // A stack frame is newline + "at": the substring "at " alone also matches
+  // innocent prose ("must be at least…"), so only the frame shape counts.
+  const hasStackFrame = (raw) => /(\n|\\n)\s*at\s/.test(raw);
+  await withServer({ fetchImpl: downFetch }, async (base) => {
+    const cases = [
+      await post(base, "/api/search", { query: "  ", passages: makePassages(1) }), // 400
+      await post(base, "/api/search", JSON.stringify({ query: "x", passages: [{ id: "p0", text: "a".repeat(BODY_CAP) }] })), // 413
+      await post(base, "/api/search", { query: "fee", passages: makePassages(1) }), // 502
+      await fetch(`${base}/nope`), // 404
+    ];
+    assert.deepEqual(cases.map((r) => r.status), [400, 413, 502, 404]);
+    for (const res of cases) {
+      const raw = await res.text();
+      assert.ok(!hasStackFrame(raw), `error body must never carry a trace frame: ${raw.slice(0, 120)}`);
+      assert.ok(!raw.includes("upstream exploded"), `upstream internals must never be echoed: ${raw.slice(0, 120)}`);
+      assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ["message"]);
+    }
+  });
+  await withServer({ fetchImpl: rawEscapeFetch }, async (base) => {
+    const res = await post(base, "/api/search", { query: "fee", passages: makePassages(1) });
+    assert.equal(res.status, 500);
+    const raw = await res.text();
+    assert.ok(!hasStackFrame(raw), `generic 500 must never carry a trace frame: ${raw.slice(0, 120)}`);
+    assert.ok(!raw.includes("boom-inside-headers"), `raw error text must never reach the wire: ${raw.slice(0, 120)}`);
+    assert.deepEqual(JSON.parse(raw), { message: "Something went wrong inside the helper." });
+  });
+});
+
 test("origin gate: websites are refused, extensions and curl pass", async () => {
   await withServer({ fetchImpl: jevOk() }, async (base) => {
     let res = await post(base, "/api/search", { query: "fee", passages: makePassages(1) }, { origin: "https://evil.example" });
@@ -171,6 +210,88 @@ test("preview: exact payload, zero Jev calls, key never echoed", async () => {
     assert.equal(body.chunks[0].state.search, "hidden charges");
     assert.ok(body.chunks[0].questions.p0);
     assert.ok(!JSON.stringify(body).includes("sk-test-SECRET"));
+  });
+});
+
+test("preview chunks match the engine's byte-sized splitter — live HTTP", async () => {
+  await withServer({ fetchImpl: jevOk() }, async (base) => {
+    const passages = makePassages(100, (i) => `Dense passage ${i}. `.repeat(120));
+    const res = await post(base, "/api/preview", { query: "fee", passages });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.stats.chunks > 2, `dense preview must chunk like the engine (got ${body.stats.chunks})`);
+    const { MAX_BODY_CHARS } = await import("../search.mjs");
+    for (const builtBody of body.chunks) {
+      // NOTE: preview's `chunks` ARE the built request bodies (server.mjs returns
+      // `chunks: bodies`), so this asserts on buildRequest output directly —
+      // no chunk-vs-body gap is possible here.
+      assert.ok(JSON.stringify(builtBody).length <= MAX_BODY_CHARS, "every previewed request body must fit the engine budget");
+    }
+  });
+});
+
+test("why: chips end-to-end over HTTP, key never in the body", async () => {
+  const whyOk = () => async () => response({ answers: { p0: { type: "choice", choice: "r0" } }, usage: { input_tokens: 5, output_tokens: 2 } });
+  await withServer({ fetchImpl: whyOk() }, async (base) => {
+    const res = await post(base, "/api/why", {
+      query: "fee",
+      matches: [{ passageId: "p0", sentence: "A late fee applies." }],
+    });
+    assert.equal(res.status, 200);
+    const raw = await res.text();
+    assert.ok(!raw.includes("sk-test-SECRET"), "key must never appear in a why response");
+    const body = JSON.parse(raw);
+    assert.deepEqual(body.reasons, [{ passageId: "p0", reason: "states a price or fee" }]);
+    assert.ok(body.stats.ms >= 0);
+  });
+});
+
+test("why: 400 on empty query and on zero matches", async () => {
+  await withServer({ fetchImpl: jevOk() }, async (base) => {
+    let res = await post(base, "/api/why", { query: "  ", matches: [{ passageId: "p0", sentence: "x" }] });
+    assert.equal(res.status, 400);
+    res = await post(base, "/api/why", { query: "fee", matches: [] });
+    assert.equal(res.status, 400);
+  });
+});
+
+test("pickProvider: unknown source is a 400 that names what exists", async () => {
+  await withServer({ fetchImpl: jevOk() }, async (base) => {
+    const res = await post(base, "/api/preview", { query: "fee", passages: makePassages(1), provider: "nope" });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).message, /Unknown source "nope"/);
+  });
+});
+
+test("pickProvider: provider id routes the request to that source", async () => {
+  const providers = [
+    { id: "a", label: "A", kind: "paid", model: "model-a", baseUrl: "https://a.test/v1", apiKey: "key-a", configured: true, badUrl: false },
+    { id: "b", label: "B", kind: "free", model: "model-b", baseUrl: "https://b.test/v1", apiKey: "key-b", configured: true, badUrl: false },
+  ];
+  const cfg = { ...config, defaultId: "a", providers };
+  const routeFetch = (url, init) => jevOk()(url, init);
+  const server = createHelperServer({ config: cfg, fetchImpl: routeFetch, log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await post(base, "/api/preview", { query: "fee", passages: makePassages(1), provider: "b" });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).model, "model-b", "preview must build with source b's model");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("pickProvider: keyless source fails fast with a 503 naming the fix", async () => {
+  const providers = [
+    { id: "a", label: "A", kind: "paid", model: "model-a", baseUrl: "https://a.test/v1", apiKey: "key-a", configured: true, badUrl: false },
+    { id: "b", label: "B", kind: "free", model: "model-b", baseUrl: "https://b.test/v1", apiKey: "", configured: false, badUrl: false },
+  ];
+  const cfg = { ...config, defaultId: "a", providers };
+  await withServer({ fetchImpl: jevOk(), config: cfg }, async (base) => {
+    const res = await post(base, "/api/search", { query: "fee", passages: makePassages(1), provider: "b" });
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).message, /no key/i);
   });
 });
 
@@ -321,4 +442,32 @@ test("client disconnect cancels the search (499 logged) and the server survives"
     const res = await fetch(`${base}/api/health`);
     assert.equal(res.status, 200); // still alive
   });
+});
+
+test("GET /api/providers exposes labels and reasons — never keys or addresses", async () => {
+  const providers = [
+    { id: "a", label: "A", kind: "paid", model: "m-a", baseUrl: "https://a.test/v1", apiKey: "sk-SECRET-1", configured: true, badUrl: false },
+    { id: "b", label: "B", kind: "free", model: "", baseUrl: "", apiKey: "", configured: false, badUrl: true },
+  ];
+  const cfg = { ...config, defaultId: "a", providers };
+  const server = createHelperServer({ config: cfg, fetchImpl: jevOk(), log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await fetch(`${base}/api/providers`);
+    assert.equal(res.status, 200);
+    const raw = await res.text();
+    assert.ok(!raw.includes("sk-SECRET"), "key value must never leave the helper");
+    assert.ok(!raw.includes("https://a.test/v1"), "base URL value must never leave the helper");
+    const body = JSON.parse(raw);
+    assert.equal(body.default, "a");
+    assert.equal(body.providers.length, 2);
+    for (const p of body.providers) {
+      assert.deepEqual(Object.keys(p).sort(), ["badUrl", "configured", "id", "kind", "label", "model", "why"]);
+    }
+    assert.equal(body.providers[0].why, "");
+    assert.ok(body.providers[1].why.length > 0, "an unusable source must say why");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });

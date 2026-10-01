@@ -32,7 +32,7 @@ run() { # run <name> <needs-model 0|1> <command...>
   local rc=$?
   local t1; t1=$(date +%s)
   if [[ $rc -eq 0 ]]; then
-    local line; line=$(grep -Eo '([0-9]+/[0-9]+ (checks|checks passed|cases)|# pass [0-9]+|ALL GOOD|ALL CHECKS PASSED|ALL CASES PASSED|0 leaks|passed)' "$log" | tail -1)
+    local line; line=$(grep -Eo '([0-9]+/[0-9]+ (checks|checks passed|cases)|# pass [0-9]+|ALL GOOD|ALL CHECKS PASSED|ALL CASES PASSED|0 leaks|WOULD SHIP|passed)' "$log" | tail -1)
     NAMES+=("$name"); RESULTS+=("PASS"); DETAILS+=("$((t1-t0))s${line:+ · $line}")
     printf '  ✓ %-34s pass  (%ss%s)\n' "$name" "$((t1-t0))" "${line:+ · $line}"
   elif [[ $rc -eq 2 ]]; then
@@ -50,11 +50,13 @@ run() { # run <name> <needs-model 0|1> <command...>
 echo "Tracky — full verification run ($(TZ=Asia/Kolkata date '+%d %b %Y %H:%M IST'))"
 echo
 
-run "unit tests"            0 node --test server/test/*.test.mjs extension/direct.test.mjs
+run "unit tests"            0 node --test server/test/*.test.mjs extension/*.test.mjs
 run "key-leak audit"        0 node scripts/key-leak-check.mjs
 run "packaging"             0 node scripts/package-extension.mjs
 run "helper health"         0 bash -c 'curl -sf http://127.0.0.1:4199/api/health | head -c 200'
 run "pdf mode (34 checks)"  0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-smoke.py
+run "pdf jump probe (sample)" 0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-jump-probe.py extension/tests/sample.pdf
+run "pdf jump probe (twocol)" 0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/pdf-jump-probe.py extension/tests/twocol.pdf
 run "extension smoke (fixture)" 0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
 run "extension smoke (wikipedia)" 0 env TRACKY_SMOKE_URL="https://en.wikipedia.org/wiki/Lease" TRACKY_SMOKE_QUERY="security deposit" xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/ext-smoke.py
 run "source picker"          0 xvfb-run -a -s "-screen 0 1400x1000x24" python3 scripts/source-picker-smoke.py

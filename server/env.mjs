@@ -81,7 +81,14 @@ export function loadEnv({ envPath = DEFAULT_ENV_PATH, target = process.env } = {
   if (!hasProviders && missing.length) {
     throw new Error(`Missing ${missing.join(", ")} — put them in ${envPath} (copy .env.example) or export them.`);
   }
-  if (String(target.JEV_BASE_URL ?? "").trim()) {
+  // The shared base is validated only when it can actually be used: with an
+  // explicit JEV_PROVIDERS list every source stands on its own URLs and an
+  // invalid shared base simply means "no fallback" (resolveProviders above
+  // already treats it as no base at all, marking inheritors unconfigured).
+  // Throwing here unconditionally used to kill startup despite fully valid
+  // per-provider URLs. Without a list the shared base IS the source, so a
+  // typo must still fail fast with a clear message.
+  if (!hasProviders && String(target.JEV_BASE_URL ?? "").trim()) {
     try {
       new URL(String(target.JEV_BASE_URL).trim());
     } catch {

@@ -54,3 +54,23 @@ test("US-style phone numbers are masked in all common forms", () => {
   assert.ok(!redactText("See ((415) 555-1234 now.").text.includes("("), "the whole paren chain must be masked");
   assert.ok(!redactText("Bare 4155551234 and ((415) 555-1234 both go.").text.includes("1234"), "no digit run may survive");
 });
+
+test("UPI handles without dot-TLD are masked (the email rule cannot see them)", () => {
+  const src = "Refund to john.doe@okhdfc within 3 days.";
+  const { text, counts } = redactText(src);
+  assert.equal(text.length, src.length, "masking stays same-length so offsets never move");
+  assert.ok(!text.includes("john.doe@okhdfc"));
+  assert.equal(counts.upi, 1);
+  assert.equal(counts.email ?? 0, 0);
+});
+
+test("dotted addresses still count as email, never upi", () => {
+  const { text, counts } = redactText("Write to john.doe@example.com now.");
+  assert.ok(!text.includes("john.doe@example.com"));
+  assert.equal(counts.email, 1);
+  assert.equal(counts.upi ?? 0, 0, "bullets from the email pass must not re-match");
+});
+
+test("upi rule leaves ordinary prose alone", () => {
+  assert.equal(redactText("Meet me @ noon by the gate.").text, "Meet me @ noon by the gate.");
+});

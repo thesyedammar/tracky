@@ -13,18 +13,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchText } from "../server/search.mjs";
 import { splitSentences } from "../server/sentences.mjs";
+import { parseEnv } from "../server/env.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const asJson = process.argv.includes("--json");
 const suiteArg = process.argv.indexOf("--suite");
 const SUITE = join(ROOT, suiteArg > -1 ? process.argv[suiteArg + 1] : "spikes/fixtures/bench.json");
 
-const env = Object.fromEntries(
-  readFileSync(join(ROOT, "server", ".env"), "utf8")
-    .split("\n")
-    .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
-    .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
-);
+const env = parseEnv(readFileSync(join(ROOT, "server", ".env"), "utf8")); // the real parser: quotes, export prefix, inline comments
 const config = { baseUrl: env.JEV_BASE_URL, model: env.JEV_MODEL, apiKey: env.JEV_API_KEY };
 
 /** The document: blank-line-separated blocks from a text file, exactly like the extension collects. */

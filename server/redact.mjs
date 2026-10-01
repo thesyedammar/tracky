@@ -14,6 +14,11 @@ export const MASK = "•";
 
 export const RULES = [
   { name: "email", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g },
+  // UPI handles (john.doe@okhdfc): no dot-TLD, so the email rule above never
+  // fires. Runs after it, so dotted addresses are already bullets (• is outside
+  // every class here and can never re-match). Privacy-first like the rest:
+  // an occasional "me@home" in prose is masked too — over-masking beats leaking.
+  { name: "upi", re: /[A-Za-z0-9._%+-]{2,}@[A-Za-z]{2,}(?![A-Za-z])/g },
   // PAN-like 5 letters + 4 digits + 1 letter (PANs are uppercase by format);
   // no \b guards, so letter-adjacent forms like XABCDE1234F still get masked.
   { name: "pan", re: /[A-Z]{5}[0-9]{4}[A-Z]/g },

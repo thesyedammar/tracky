@@ -9,13 +9,13 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { loadEnv, envSuffix } from "./env.mjs";
-import { searchText } from "./search.mjs";
+import { searchText, chunkPrepared, MAX_BODY_CHARS } from "./search.mjs";
 import { whyFor, validateWhyInput } from "./why.mjs";
 import { validateSearchInput, SearchError, LIMITS } from "./validate.mjs";
 import { preparePassages, buildRequest, BATCH_MAX } from "./jev.mjs";
 import { redactText } from "./redact.mjs";
 
-export const BODY_CAP = 512 * 1024; // 512 KB — the contract cap
+export const BODY_CAP = 512 * 1024; // 512 KB — the transport's wire cap for the whole serialized body; validation's lower 400 KB serialized-byte cap (LIMITS.totalBytesMax) leaves headroom for the query/envelope, so a validated request always fits
 export const NAME = "tracky-helper";
 export const VERSION = "0.4.0";
 
@@ -278,11 +278,19 @@ export function createHelperServer({
 
         if (path === "/api/preview") {
           const prepared = preparePassages(passages);
-          const bodies = [];
-          for (let i = 0; i < prepared.length; i += BATCH_MAX) {
-            const chunk = prepared.slice(i, i + BATCH_MAX);
-            bodies.push(buildRequest({ query: input.query, passages: chunk, model: source.model }));
-          }
+          // Same splitter AND same budget as the real search: chunkPrepared
+          // takes maxBodyChars as a REQUIRED option (no default to hide
+          // behind), so both call sites state their budget from the same
+          // imported MAX_BODY_CHARS binding — changing the CONSTANT flows
+          // through both by construction. searchText additionally exposes the
+          // knob as an option (defaulting to the constant) for tests, while
+          // preview has no such knob by design; if searchText's default ever
+          // stopped being the constant, the preview-parity test below goes
+          // red. Behavior is pinned by that test.
+          // "preview chunks match the engine's byte-sized splitter — live HTTP".
+          const bodies = chunkPrepared(prepared, { maxBodyChars: MAX_BODY_CHARS }).map((chunk) =>
+            buildRequest({ query: input.query, passages: chunk, model: source.model }),
+          );
           const bytes = Buffer.byteLength(JSON.stringify(bodies));
           log(`POST /api/preview → 200 · source ${source.id} · ${prepared.length} passages · ${bodies.length} chunk${bodies.length > 1 ? "s" : ""} · ${bytes} B${redactNote} · ${Date.now() - started} ms`);
           return sendJson(res, 200, {

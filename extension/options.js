@@ -19,6 +19,9 @@ const HELPER = "http://127.0.0.1:4199";
  *  is guarded and says what is wrong instead of throwing on the first line. */
 const DIRECT = globalThis.TrackyDirect ?? null;
 const DIRECT_ORIGINS = DIRECT ? [...new Set(DIRECT.ROUTES.map((r) => r.origin))] : [];
+/** shared.js loads before this file (options.html): pure hostname normalization.
+ *  Guarded like DIRECT above — the page must still open if it ever fails to load. */
+const SHARED = globalThis.TrackyShared ?? null;
 
 const $ = (id) => document.getElementById(id);
 /** Say something where the user can see it. #dtest-note lives inside the Direct panel,
@@ -211,10 +214,26 @@ function renderSpend(spend) {
 }
 
 async function save() {
-  const hosts = $("hosts")
-    .value.split("\n")
-    .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0 && !h.includes(" ") && !h.startsWith("http"));
+  const lines = $("hosts").value.split("\n");
+  // Normalize to hostnames so what is stored is what hostMatches can match.
+  // Falls back to the old keep-as-typed filter only if shared.js failed to load.
+  const { hosts, dropped } = SHARED
+    ? SHARED.normalizeHosts(lines)
+    : {
+        hosts: lines.map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0 && !h.includes(" ") && !h.startsWith("http")),
+        dropped: [],
+      };
+  const note = $("hosts-note");
+  if (note) {
+    if (dropped.length) {
+      const shown = dropped.slice(0, 3).join(", ") + (dropped.length > 3 ? "…" : "");
+      note.textContent = `Ignored ${dropped.length} invalid entr${dropped.length === 1 ? "y" : "ies"}: ${shown}`;
+      note.className = "warn";
+    } else {
+      note.textContent = "Alt+K on a listed site does nothing but show a small dash on the icon.";
+      note.className = "muted";
+    }
+  }
   // A disabled select means the helper was offline while this page was open: its empty
   // value is "I couldn't ask", not "the user cleared it" — keep what was stored.
   const sel = $("source");

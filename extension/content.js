@@ -41,7 +41,7 @@
          amber. Nothing else. */
       :host { all: initial; }
       .wrap {
-        --bg: rgba(11, 15, 24, .94);
+        --bg: rgba(13, 18, 30, .86);
         --surface: rgba(255, 255, 255, .055);
         --surface-2: rgba(255, 255, 255, .09);
         --line: rgba(255, 255, 255, .085);
@@ -63,12 +63,16 @@
         color: var(--ink);
       }
       .panel {
-        background: var(--bg);
-        backdrop-filter: blur(14px) saturate(1.2);
-        border: 1px solid var(--line);
+        background:
+          linear-gradient(var(--bg), var(--bg)) padding-box,
+          linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .04) 28%, rgba(245, 196, 83, .16)) border-box;
+        border: 1px solid transparent;
+        backdrop-filter: blur(20px) saturate(1.35);
+        -webkit-backdrop-filter: blur(20px) saturate(1.35);
         border-radius: 14px; overflow: hidden;
         box-shadow: 0 24px 60px rgba(0, 0, 0, .5), 0 2px 10px rgba(0, 0, 0, .35),
-                    inset 0 1px 0 rgba(255, 255, 255, .05);
+                    0 0 48px rgba(225, 155, 44, .07),
+                    inset 0 1px 0 rgba(255, 255, 255, .09);
         /* A keyboard toggle is opened dozens of times a day: the shell arrives in
            150ms flat (no scale, no bounce, no per-child stagger) — enough to avoid a
            jarring pop, never enough to feel like waiting. The motion budget goes to
@@ -82,7 +86,7 @@
       .mark {
         width: 16px; height: 16px; border-radius: 5px; flex: none;
         background: linear-gradient(135deg, #F5C453, #E19B2C);
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
+        box-shadow: 0 0 12px rgba(245, 196, 83, .45), inset 0 0 0 1px rgba(255, 255, 255, .14);
       }
       .name { font-weight: 650; letter-spacing: .2px; }
       .ver { color: var(--ink-3); font-size: 11px; margin-left: 5px; font-variant-numeric: tabular-nums; }
@@ -100,13 +104,14 @@
         flex: 1; min-width: 0; box-sizing: border-box; background: var(--surface);
         border: 1px solid var(--line); border-radius: 10px;
         color: var(--ink); padding: 9px 12px; font: inherit;
+        box-shadow: inset 0 1px 3px rgba(0, 0, 0, .28);
         transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), box-shadow var(--d2) var(--e-out);
       }
       input[type="text"]:hover { background: var(--surface-2); }
       input[type="text"]:focus {
         background: rgba(255, 255, 255, .06);
         border-color: rgba(245, 196, 83, .4);
-        box-shadow: 0 0 0 3px rgba(245, 196, 83, .10);
+        box-shadow: inset 0 1px 3px rgba(0, 0, 0, .28), 0 0 0 3px rgba(245, 196, 83, .10), 0 0 18px rgba(245, 196, 83, .08);
       }
       input::placeholder { color: var(--ink-3); }
       .rescan {
@@ -235,15 +240,19 @@
       .hit:last-child { margin-bottom: 2px; }
       .hit { position: relative; padding-right: 34px; transition: background var(--d1) var(--e-out), border-color var(--d1) var(--e-out), transform var(--d1) var(--e-out); }
       .hit:hover { background: var(--surface-2); border-color: rgba(255, 255, 255, .13); transform: translateY(-1px); }
-      .hit.selected { border-color: rgba(245, 196, 83, .45); background: rgba(245, 196, 83, .08); }
+      .hit.selected { border-color: rgba(245, 196, 83, .45); background: rgba(245, 196, 83, .08); box-shadow: inset 2px 0 0 var(--gold); }
+      /* Result rows align like the browser's own find bar: rank and score pin to
+         a grid so wrapped sentences keep a hanging indent instead of sliding
+         under the number. */
       .hit .jump {
         appearance: none; border: 0; background: transparent; color: inherit; font: inherit;
-        text-align: left; width: 100%; padding: 0; cursor: pointer; display: block;
+        text-align: left; width: 100%; padding: 0; cursor: pointer;
+        display: grid; grid-template-columns: auto auto 1fr; column-gap: 7px; align-items: baseline;
       }
       .hit .jump:active { transform: scale(.995); }
       .hit .jump:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 6px; }
-      .hit .rank { display: inline-block; min-width: 12px; margin-right: 6px; color: #66707F; font-size: 11px; font-variant-numeric: tabular-nums; }
-      .hit .score { display: inline-block; min-width: 36px; margin-right: 7px; color: var(--gold); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .hit .rank { display: inline-block; min-width: 12px; color: #66707F; font-size: 11px; font-variant-numeric: tabular-nums; }
+      .hit .score { display: inline-block; min-width: 36px; color: var(--gold); font-weight: 650; font-variant-numeric: tabular-nums; }
       .hit .sentence { color: #DEE5EF; line-height: 1.5; }
       .hit .copy {
         position: absolute; top: 5px; right: 5px; appearance: none; border: 0; background: transparent;
@@ -274,8 +283,11 @@
       .card {
         position: relative; overflow: hidden;
         margin: 2px 0 10px; padding: 12px 13px; border-radius: 12px;
-        background: linear-gradient(180deg, rgba(245, 196, 83, .10), rgba(245, 196, 83, .03));
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 34%),
+          linear-gradient(180deg, rgba(245, 196, 83, .10), rgba(245, 196, 83, .03));
         border: 1px solid rgba(245, 196, 83, .25);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 8px 24px rgba(225, 155, 44, .08);
         animation: tRise var(--d3) var(--e-out) both;
       }
       .card::after {
@@ -315,7 +327,7 @@
       .findrow .walk:disabled { opacity: .35; cursor: default; }
       .findrow .find-label { color: var(--ink-2); font-size: 11.5px; }
       .findrow .count { margin-left: auto; color: var(--gold); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-      .hit .tag { display: inline-block; min-width: 36px; margin-right: 7px; color: #9FB4D8; font-size: 11px; font-weight: 600; }
+      .hit .tag { display: inline-block; min-width: 36px; color: #9FB4D8; font-size: 11px; font-weight: 600; }
       .hit .why { display: block; margin: 5px 0 0 19px; color: #9CC6A9; font-size: 11px; }
       .hit .why[hidden] { display: none; }
       .results-foot { padding: 5px 0 2px; }
@@ -450,9 +462,14 @@
     });
   };
 
-  const HELP_FIX = "helper not running — start it: node server/server.mjs";
+  // Single-sourced from shared.js (injected before this file via the files array
+  // in background.js); the literal is only the fallback for a broken install.
+  const HELP_FIX = globalThis.TrackyShared?.HELPER_FIX ?? "helper not running — start it: node server/server.mjs";
 
   let pingSeq = 0; // only the latest ping may write the status line
+  let isDirectMode = false; // set by ping(): the catch below must not blame a helper direct mode never had
+  let hasHealth = false; // false until a ping resolves: with no health signal, errors stay neutral, never HELP_FIX
+  let pingFailed = false; // true once a ping visibly fails: the helper is known-down, so HELP_FIX is actionable again
   async function ping() {
     const seq = ++pingSeq;
     clearTimeout(statusTimer); // a pending "briefly" revert must not clobber this
@@ -464,15 +481,33 @@
       if (reply?.ok && h?.direct) {
         // Direct mode has no helper: say what it is actually running on, and which of
         // the two things it still needs (a key, the origin permission) is missing.
+        isDirectMode = true;
+        hasHealth = true;
+        pingFailed = false;
         const why = !h.key ? "paste your key in Tracky's options" : "allow access to opencode.ai in Tracky's options";
         setStatus(h.ready ? "ok" : "bad", h.ready ? `direct · ${h.model} · ready` : `direct mode — ${why}`);
       } else if (reply?.ok && typeof h?.version === "string" && typeof h?.model === "string") {
+        isDirectMode = false;
+        hasHealth = true;
+        pingFailed = false;
         setStatus("ok", `helper ${h.version} · ${h.model} · ready`);
       } else {
+        // Unexpected shape and thrown pings both mean the health signal is gone;
+        // the mode flag must go with it (a stale `true` would mislabel helper errors).
+        isDirectMode = false;
+        hasHealth = false;
+        pingFailed = true;
         setStatus("bad", HELP_FIX);
       }
     } catch {
-      if (seq === pingSeq) setStatus("bad", HELP_FIX);
+      // Guarded like the success path above: a stale ping that throws late must
+      // not flip flags a newer ping already set.
+      if (seq === pingSeq) {
+        isDirectMode = false;
+        hasHealth = false;
+        pingFailed = true;
+        setStatus("bad", HELP_FIX);
+      }
     }
   }
 
@@ -487,6 +522,7 @@
     const wasVisible = visible;
     wrap.style.display = "";
     visible = true;
+    armSpaWatcher(); // the URL watcher lives only while the panel does
     if (isDenied()) {
       setStatus("idle", DENY_MSG);
     } else if (!wasVisible) {
@@ -498,6 +534,10 @@
   function close() {
     if (!visible) return;
     visible = false;
+    if (spaTimer != null) {
+      clearInterval(spaTimer); // the watcher dies with the panel — never a forever interval
+      spaTimer = null;
+    }
     clearTimeout(statusTimer); // no stale revert while hidden
     clearHighlight(); // tidy: the marker belongs to the panel session
     const panel = $(".panel");
@@ -960,14 +1000,25 @@
 
   /** The Range for one hit, or null — a single derivation for painting and jumping. */
   function rangeForHit(r) {
-    if (!r) return null;
+    if (!r || typeof r.sentence !== "string" || !r.sentence) return null;
     const block = lastById?.get(r.passageId);
+    if (typeof block?.text !== "string") return null;
     if (!block?.element?.isConnected) return null;
-    const pos =
-      Number.isFinite(r.offset) && block.text.slice(r.offset, r.offset + r.sentence.length) === r.sentence
-        ? r.offset
+    // Verified offset wins; otherwise the sentence only when it occurs exactly
+    // once (shared). A missing offset on a repeated sentence highlights nothing
+    // instead of the wrong repeat. When shared.js failed to load (a surface that
+    // bundles content.js without it — pdf.html did, once), fall back to the
+    // shipped inline rule rather than failing every jump as "page changed".
+    const resolve = globalThis.TrackyShared?.resolveOffset;
+    const off = r.offset;
+    const verified = Number.isFinite(off) && off >= 0 &&
+      block.text.slice(off, off + r.sentence.length) === r.sentence;
+    const pos = typeof resolve === "function"
+      ? resolve(block.text, off, r.sentence)
+      : verified
+        ? off
         : block.text.indexOf(r.sentence);
-    if (pos < 0) return null;
+    if (!Number.isFinite(pos) || pos < 0) return null;
     const range = rangeFor(block, pos, r.sentence.length);
     return range && !range.collapsed ? range : null;
   }
@@ -1389,7 +1440,14 @@
       // would yank the page out from under you).
       if (o.jump ?? (opts.autoJump !== false && !o.auto)) jumpTo(0);
     } catch (err) {
-      setStatus("bad", /timeout/i.test(err?.message ?? "") ? "search timed out — is the helper healthy?" : HELP_FIX);
+      // The copy lives in shared.js (unit-tested there); the inline ternary is
+      // only the fallback for a broken install where shared.js failed to inject.
+      const msg = typeof err?.message === "string" ? err.message : "";
+      const pick = globalThis.TrackyShared?.searchErrorStatus;
+      const status = pick
+        ? pick({ isDirectMode, hasHealth, pingFailed }, msg)
+        : (/timeout/i.test(msg) ? "search timed out — is the helper healthy?" : HELP_FIX);
+      setStatus("bad", status);
       setBar(0);
       showResults("");
     } finally {
@@ -1487,6 +1545,9 @@
       if (!opts.hijackCtrlF) return;
       if (e.key !== "f" && e.key !== "F") return;
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      // Never steal find from an editor: Docs, DevTools sources, Monaco, CMS
+      // fields — the user meant the page's own find there, not Tracky.
+      if (globalThis.TrackyShared?.isEditableTarget(e.target)) return;
       if (isDenied()) return;
       open();
       e.preventDefault();
@@ -1497,15 +1558,21 @@
 
   // SPA continuity: a URL change with the panel open re-runs the last question.
   // (An interval, not a MutationObserver — busy pages would fire a callback storm.)
+  // Armed only while the panel is open: an interval left running after close()
+  // wakes the page every second for its whole lifetime.
   let lastHref = location.href;
-  setInterval(() => {
-    if (!visible || !lastSearchKey) return;
-    if (location.href === lastHref) return;
-    lastHref = location.href;
-    clearTimeout(statusTimer);
-    setStatus("wait", "page changed — re-scanning…");
-    runSearch({ force: true });
-  }, 1000);
+  let spaTimer = null;
+  function armSpaWatcher() {
+    if (spaTimer != null) return;
+    spaTimer = setInterval(() => {
+      if (!visible || !lastSearchKey) return;
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      clearTimeout(statusTimer);
+      setStatus("wait", "page changed — re-scanning…");
+      runSearch({ force: true });
+    }, 1000);
+  }
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "tracky:open") open();
